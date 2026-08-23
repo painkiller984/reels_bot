@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { MediaPipeline } from "../application/ports.js";
-import { productImageIds, type ContentJob } from "../domain/job.js";
-import type { BrollBackgroundGenerator } from "./openrouter-product-image-generator.js";
+import { createFallbackMontagePlan, productImageIds, type ContentJob, type MontagePlan, type MontageScene } from "../domain/job.js";
+import type { BrollBackgroundGenerator, GeneratedBackground } from "./openrouter-product-image-generator.js";
 
 export interface SpeechSynthesizer {
   synthesize(text: string, outputFile: string): Promise<void>;
@@ -123,12 +123,13 @@ export class LocalMediaPipeline implements MediaPipeline {
       : this.createSrt(job);
     await writeFile(captions, this.normalizeSrt(captionsSource), "utf8");
     const subtitlePath = captions.replace(/\\/g, "/").replace(":", "\\:").replace(/'/g, "\\'");
-    const subtitleStyle = "FontName=Arial,FontSize=8,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1.5,Shadow=1,Alignment=2,MarginL=100,MarginR=100,MarginV=50";
+    const montagePlan = job.script?.montagePlan ?? createFallbackMontagePlan(job.brief);
+    const subtitleStyle = this.subtitleStyle(montagePlan);
     const musicFile = resolve(directory, "music.mp3");
     let hasMusic = false;
     if (this.options.downloadBackgroundMusic) {
       try {
-        await this.options.downloadBackgroundMusic(job.brief.topic, musicFile);
+        await this.options.downloadBackgroundMusic(`${job.brief.topic} ${montagePlan.musicMood}`, musicFile);
         hasMusic = true;
       } catch {
         hasMusic = false;
@@ -141,23 +142,22 @@ export class LocalMediaPipeline implements MediaPipeline {
         await this.options.downloadTelegramImage!(fileId, destination);
         return destination;
       }));
-      let generatedBackgroundImages: string[] = [];
-      if (suppliedProductImages.length === 1 && this.options.brollBackgroundGenerator) {
+      let generatedBackgrounds: GeneratedBackground[] = [];
+      if (this.options.brollBackgroundGenerator && montagePlan.generatedVisuals.length > 0) {
         try {
-          generatedBackgroundImages = await this.options.brollBackgroundGenerator.generate(job, suppliedProductImages[0]!, directory);
+          generatedBackgrounds = await this.options.brollBackgroundGenerator.generate(job, montagePlan.generatedVisuals, directory);
         } catch {
-          generatedBackgroundImages = [];
+          generatedBackgrounds = [];
         }
       }
-      const generatedBackgrounds = generatedBackgroundImages.slice(0, 3);
-      const montageImages = [...suppliedProductImages, ...generatedBackgrounds];
+      const montageImages = [...suppliedProductImages, ...generatedBackgrounds.map((background) => background.path)];
       const imageInputs = montageImages.flatMap((productImage) => ["-loop", "1", "-framerate", "25", "-i", productImage]);
       const musicInputIndex = montageImages.length + 1;
       const musicInput = hasMusic ? ["-stream_loop", "-1", "-i", musicFile] : [];
       const musicFilter = hasMusic
         ? `;[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[voice];[${musicInputIndex}:a]aresample=48000,volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, targetDuration - 1)}:d=1,atrim=duration=${targetDuration}[music];[voice][music]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0,atrim=duration=${targetDuration},apad=whole_dur=${targetDuration}[outa]`
         : `;[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=${targetDuration}[outa]`;
-      const productVideoFilter = this.productMontageFilter(suppliedProductImages.length, generatedBackgrounds.length, targetDuration);
+      const productVideoFilter = this.productMontageFilter(suppliedProductImages.length, generatedBackgrounds, targetDuration, montagePlan);
       await this.ffmpeg([
         "-y", "-i", avatarUri, ...imageInputs, ...musicInput,
         "-filter_complex", `${productVideoFilter.filter};${productVideoFilter.output}subtitles='${subtitlePath}':force_style='${subtitleStyle}'[outv]${musicFilter}`,
@@ -231,6 +231,8 @@ export class LocalMediaPipeline implements MediaPipeline {
       blackFramesReasonable: blackDuration <= Math.max(1, duration * 0.1),
     };
     const passed = Object.values(checks).every(Boolean);
+    const generatedVisualCount = (await readdir(dirname(renderUri)))
+      .filter((name) => /^generated_[12]\.(?:png|jpe?g|webp)$/iu.test(name)).length;
     const report = {
       passed,
       checks,
@@ -248,7 +250,12 @@ export class LocalMediaPipeline implements MediaPipeline {
         trailingSilenceSec: trailingSilence,
         blackDurationSec: blackDuration,
         productImageCount: productImageIds(job.brief).length,
-        montageTemplate: productImageIds(job.brief).length > 1 ? "dynamic-multi-image" : "dynamic-single-image",
+        montageTemplate: job.script?.montagePlan ? `ai-director-${job.script.montagePlan.style}` : "dynamic-fallback",
+        montageSceneCount: job.script?.montagePlan?.scenes.length ?? createFallbackMontagePlan(job.brief).scenes.length,
+        aiGeneratedVisualCount: generatedVisualCount,
+        imageGenerationModel: this.options.brollBackgroundGenerator?.model,
+        estimatedGeneratedVisualCostUsd: Number((generatedVisualCount
+          * (this.options.brollBackgroundGenerator?.estimatedCostPerImageUsd ?? 0)).toFixed(4)),
       },
     };
     const output = resolve(await this.jobDirectory(job.id), "quality.json");
@@ -288,71 +295,127 @@ export class LocalMediaPipeline implements MediaPipeline {
     }
   }
 
-  private productMontageFilter(productCount: number, backgroundCount: number, duration: number): { filter: string; output: string } {
+  private productMontageFilter(productCount: number, backgrounds: GeneratedBackground[], duration: number, plan: MontagePlan): { filter: string; output: string } {
     const chains: string[] = ["[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1[avatarbase]"];
-    const introEnd = Math.min(2.2, Math.max(1.4, duration * 0.16));
-    const outroStart = Math.max(introEnd + 1, duration - Math.min(2, duration * 0.16));
-    const midStart = Math.max(introEnd + 0.8, duration * 0.48);
-    const midEnd = Math.min(outroStart - 0.35, midStart + Math.min(1.8, duration * 0.13));
-    const cardWindow = Math.max(0.5, outroStart - introEnd);
-    const cardSlice = cardWindow / productCount;
-    const cardIntervals = Array.from({ length: productCount }, (_, index) => {
-      const start = introEnd + cardSlice * index;
-      return { start, end: Math.min(outroStart, start + cardSlice) };
+    const totalWeight = plan.scenes.reduce((sum, scene) => sum + scene.durationWeight, 0);
+    let cursor = 0;
+    const scenes = plan.scenes.map((scene, index) => {
+      const end = index === plan.scenes.length - 1 ? duration : cursor + duration * scene.durationWeight / totalWeight;
+      const timed = {
+        scene,
+        start: cursor,
+        end,
+        product: Math.min(productCount - 1, Math.max(0, scene.productIndex ?? 0)),
+        background: backgrounds.findIndex((background) => background.id === scene.background),
+      };
+      cursor = end;
+      return timed;
     });
-    const scenes = [
-      { product: 0, background: backgroundCount > 0 ? 0 : undefined, start: 0, end: introEnd },
-      { product: Math.min(1, productCount - 1), background: backgroundCount > 0 ? 1 % backgroundCount : undefined, start: midStart, end: midEnd },
-      { product: productCount - 1, background: backgroundCount > 0 ? 2 % backgroundCount : undefined, start: outroStart, end: duration },
-    ].filter((scene) => scene.end > scene.start);
 
     for (let product = 0; product < productCount; product += 1) {
-      const sceneIndexes = scenes.map((scene, index) => ({ scene, index })).filter(({ scene }) => scene.product === product).map(({ index }) => index);
-      const labels = [`p${product}cardsrc`, ...sceneIndexes.map((scene) => `s${scene}productsrc`)];
+      const labels = scenes
+        .map((timed, index) => ({ timed, index }))
+        .filter(({ timed }) => timed.scene.kind !== "avatar" && timed.product === product)
+        .map(({ index }) => `s${index}productsrc`);
+      if (labels.length === 0) continue;
       if (labels.length === 1) chains.push(`[${product + 1}:v]null[${labels[0]}]`);
       else chains.push(`[${product + 1}:v]split=${labels.length}${labels.map((label) => `[${label}]`).join("")}`);
-      const card = cardIntervals[product]!;
-      const cardFade = Math.min(0.25, Math.max(0.1, (card.end - card.start) / 4));
-      chains.push(`[p${product}cardsrc]scale=200:200:force_original_aspect_ratio=decrease,pad=220:220:(ow-iw)/2:(oh-ih)/2:color=white,format=rgba,fade=t=in:st=${card.start.toFixed(3)}:d=${cardFade.toFixed(3)}:alpha=1,fade=t=out:st=${Math.max(card.start, card.end - cardFade).toFixed(3)}:d=${cardFade.toFixed(3)}:alpha=1[p${product}card]`);
     }
 
-    for (let background = 0; background < backgroundCount; background += 1) {
-      const sceneIndexes = scenes.map((scene, index) => ({ scene, index })).filter(({ scene }) => scene.background === background).map(({ index }) => index);
-      const labels = sceneIndexes.map((scene) => `s${scene}backgroundsrc`);
+    for (let background = 0; background < backgrounds.length; background += 1) {
+      const labels = scenes
+        .map((timed, index) => ({ timed, index }))
+        .filter(({ timed }) => timed.scene.kind === "product_fullscreen" && timed.background === background)
+        .map(({ index }) => `s${index}backgroundsrc`);
       const input = 1 + productCount + background;
       if (labels.length === 1) chains.push(`[${input}:v]null[${labels[0]}]`);
       else if (labels.length > 1) chains.push(`[${input}:v]split=${labels.length}${labels.map((label) => `[${label}]`).join("")}`);
     }
 
-    scenes.forEach((scene, index) => {
-      if (scene.background !== undefined) {
-        chains.push(`[s${index}backgroundsrc]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,eq=brightness=-0.16[s${index}bg]`);
-        chains.push(`[s${index}productsrc]scale=650:1080:force_original_aspect_ratio=decrease[s${index}fg]`);
-      } else {
-        chains.push(`[s${index}productsrc]split=2[s${index}bgsrc][s${index}fgsrc]`);
-        chains.push(`[s${index}bgsrc]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=20:2,eq=brightness=-0.22[s${index}bg]`);
-        chains.push(`[s${index}fgsrc]scale=650:1080:force_original_aspect_ratio=decrease[s${index}fg]`);
-      }
-      const sceneFade = Math.min(0.3, Math.max(0.12, (scene.end - scene.start) / 4));
-      chains.push(`[s${index}bg][s${index}fg]overlay=(W-w)/2:(H-h)/2,zoompan=z='min(zoom+0.0009,1.07)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=720x1280:fps=25,format=rgba,fade=t=in:st=${scene.start.toFixed(3)}:d=${sceneFade.toFixed(3)}:alpha=1,fade=t=out:st=${Math.max(scene.start, scene.end - sceneFade).toFixed(3)}:d=${sceneFade.toFixed(3)}:alpha=1[s${index}full]`);
-    });
-
     let current = "avatarbase";
     let stage = 0;
-    for (const [index, scene] of scenes.entries()) {
-      const next = `montage${stage++}`;
-      chains.push(`[${current}][s${index}full]overlay=0:0:eof_action=pass:enable='between(t,${scene.start.toFixed(3)},${scene.end.toFixed(3)})'[${next}]`);
-      current = next;
-    }
+    for (const [index, timed] of scenes.entries()) {
+      if (timed.scene.kind === "avatar") continue;
+      const sceneLength = timed.end - timed.start;
+      const fade = timed.scene.transition === "cut" ? 0.02 : Math.min(0.28, Math.max(0.12, sceneLength / 5));
+      const start = timed.start.toFixed(3);
+      const end = timed.end.toFixed(3);
+      const fadeOut = Math.max(timed.start, timed.end - fade).toFixed(3);
+      let overlayLabel: string;
 
-    for (let index = 0; index < productCount; index += 1) {
-      const { start, end } = cardIntervals[index]!;
-      const x = index % 2 === 0 ? 24 : "W-w-24";
+      if (timed.scene.kind === "product_fullscreen") {
+        if (timed.background >= 0) {
+          chains.push(`[s${index}backgroundsrc]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,eq=brightness=-0.14[s${index}bg]`);
+          chains.push(`[s${index}productsrc]scale=650:1080:force_original_aspect_ratio=decrease[s${index}fg]`);
+        } else {
+          chains.push(`[s${index}productsrc]split=2[s${index}bgsrc][s${index}fgsrc]`);
+          chains.push(`[s${index}bgsrc]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=22:2,eq=brightness=-0.24:saturation=1.15[s${index}bg]`);
+          chains.push(`[s${index}fgsrc]scale=650:1080:force_original_aspect_ratio=decrease[s${index}fg]`);
+        }
+        const motion = this.fullscreenMotion(timed.scene, sceneLength);
+        chains.push(`[s${index}bg][s${index}fg]overlay=(W-w)/2:(H-h)/2,${motion},format=rgba,fade=t=in:st=${start}:d=${fade.toFixed(3)}:alpha=1,fade=t=out:st=${fadeOut}:d=${fade.toFixed(3)}:alpha=1[s${index}visual]`);
+        overlayLabel = `s${index}visual`;
+      } else {
+        const split = timed.scene.kind === "split_product";
+        const size = split ? 430 : 250;
+        const content = split ? 400 : 220;
+        const pop = timed.scene.motion === "pop"
+          ? `,zoompan=z='min(zoom+0.006,1.13)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${size}x${size}:fps=25`
+          : "";
+        chains.push(`[s${index}productsrc]scale=${content}:${content}:force_original_aspect_ratio=decrease,pad=${size}:${size}:(ow-iw)/2:(oh-ih)/2:color=white${pop},format=rgba,fade=t=in:st=${start}:d=${fade.toFixed(3)}:alpha=1,fade=t=out:st=${fadeOut}:d=${fade.toFixed(3)}:alpha=1[s${index}visual]`);
+        overlayLabel = `s${index}visual`;
+      }
+
       const next = `montage${stage++}`;
-      chains.push(`[${current}][p${index}card]overlay=${x}:60:eof_action=pass:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'[${next}]`);
+      const position = this.scenePosition(timed.scene, timed.start, timed.scene.kind === "split_product", index);
+      chains.push(`[${current}][${overlayLabel}]overlay=x='${position.x}':y='${position.y}':eof_action=pass:enable='between(t,${start},${end})'[${next}]`);
       current = next;
     }
     return { filter: chains.join(";"), output: `[${current}]` };
+  }
+
+  private fullscreenMotion(scene: MontageScene, sceneLength: number): string {
+    const frames = Math.max(1, Math.round(sceneLength * 25));
+    if (scene.motion === "zoom_out") {
+      return "zoompan=z='if(eq(on,0),1.10,max(zoom-0.0012,1.0))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=720x1280:fps=25";
+    }
+    if (scene.motion === "pan_left") {
+      return `zoompan=z=1.08:x='(iw-iw/zoom)*min(on/${frames},1)':y='ih/2-(ih/zoom/2)':d=1:s=720x1280:fps=25`;
+    }
+    if (scene.motion === "pan_right") {
+      return `zoompan=z=1.08:x='(iw-iw/zoom)*(1-min(on/${frames},1))':y='ih/2-(ih/zoom/2)':d=1:s=720x1280:fps=25`;
+    }
+    return "zoompan=z='min(zoom+0.0012,1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=720x1280:fps=25";
+  }
+
+  private scenePosition(scene: MontageScene, startTime: number, split: boolean, index: number): { x: string; y: string } {
+    const duration = 0.28;
+    const start = startTime.toFixed(3);
+    const progress = `(t-${start})/${duration}`;
+    const fullscreen = scene.kind === "product_fullscreen";
+    const targetX = fullscreen ? "0" : split ? "(W-w)/2" : index % 2 === 0 ? "28" : "W-w-28";
+    const targetY = fullscreen ? "0" : split ? "H-h-170" : "80";
+    const incoming = fullscreen ? scene.transition : scene.motion === "none" ? scene.transition : scene.motion;
+    if (incoming === "fly_from_bottom" || incoming === "push_up") {
+      return { x: targetX, y: `if(lt(t,${start}+${duration}),H+((${targetY})-H)*(${progress}),${targetY})` };
+    }
+    if (incoming === "fly_from_top" || incoming === "push_down") {
+      return { x: targetX, y: `if(lt(t,${start}+${duration}),-h+((${targetY})+h)*(${progress}),${targetY})` };
+    }
+    if (incoming === "slide_left" || incoming === "whip_right") {
+      return { x: `if(lt(t,${start}+${duration}),-w+((${targetX})+w)*(${progress}),${targetX})`, y: targetY };
+    }
+    if (incoming === "slide_right" || incoming === "whip_left") {
+      return { x: `if(lt(t,${start}+${duration}),W+((${targetX})-W)*(${progress}),${targetX})`, y: targetY };
+    }
+    return { x: targetX, y: targetY };
+  }
+
+  private subtitleStyle(plan: MontagePlan): string {
+    const common = "FontName=Arial,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Alignment=2,MarginL=85,MarginR=85,MarginV=55";
+    if (plan.subtitleStyle === "minimal") return `${common},FontSize=9,Outline=1,Shadow=0`;
+    if (plan.subtitleStyle === "highlight") return `${common},FontSize=11,SecondaryColour=&H0000D7FF,Outline=2,Shadow=1,Bold=1`;
+    return `${common},FontSize=11,Outline=2,Shadow=1,Bold=1`;
   }
 
   private normalizeSrt(source: string): string {

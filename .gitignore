@@ -7,6 +7,8 @@ artifacts/
 *.log
 .DS_Store
 *_api.png
+*_api.jpg
+youtube_secret.json
 tg_bot_token.png
 Oauth_client_youtube.png
 .venv-stt/

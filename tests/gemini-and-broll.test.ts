@@ -63,11 +63,44 @@ describe("Gemini and generated B-roll", () => {
       updatedAt: now,
     };
 
-    await generator.generate(job, "real-product.jpg", ".");
+    await generator.generate(job, [{
+      id: "generated_1",
+      purpose: "background",
+      prompt: "Светлая современная кухня с местом для товара справа",
+    }], ".");
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.input_references).toBeUndefined();
     expect(request.prompt).toMatch(/do not draw, imitate or alter the product itself/iu);
-    expect(request.n).toBe(2);
+    expect(request.n).toBe(1);
     expect(request.aspect_ratio).toBe("9:16");
+  });
+
+  it("never asks the paid image endpoint for more than the configured limit", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const generator = new OpenRouterBrollBackgroundGenerator({
+      apiKey: "test",
+      model: "google/gemini-3.1-flash-lite-image",
+      imageCount: 2,
+    });
+    const now = new Date();
+    const job: ContentJob = {
+      id: "job",
+      userId: "user",
+      status: "rendering",
+      brief,
+      artifacts: [],
+      publications: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    await generator.generate(job, [
+      { id: "generated_1", purpose: "background", prompt: "Светлая кухня для рекламной предметной съёмки" },
+      { id: "generated_2", purpose: "texture", prompt: "Динамичная зелёная текстура для рекламного фона" },
+      { id: "generated_1", purpose: "lifestyle", prompt: "Современный интерьер с чистой зоной под товар" },
+    ], ".");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

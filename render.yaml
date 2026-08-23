@@ -43,13 +43,17 @@ services:
       - key: SCRIPT_PROVIDER
         value: openrouter
       - key: OPENROUTER_MODEL
-        value: openrouter/free
+        value: google/gemini-3.5-flash-lite
       - key: BROLL_PROVIDER
-        value: none
+        value: openrouter
       - key: OPENROUTER_IMAGE_MODEL
         value: google/gemini-3.1-flash-lite-image
       - key: OPENROUTER_BROLL_COUNT
         value: 2
+      - key: OPENROUTER_IMAGE_ESTIMATED_COST_USD
+        value: 0.0336
+      - key: OPENROUTER_BROLL_MAX_COST_USD
+        value: 0.08
       - key: GEMINI_MODEL
         value: gemini-3.5-flash-lite
       - key: TTS_PROVIDER

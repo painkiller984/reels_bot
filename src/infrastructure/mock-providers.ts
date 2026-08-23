@@ -1,5 +1,5 @@
 import type { MediaPipeline, ScriptGenerator, SocialPublisher } from "../application/ports.js";
-import type { Brief, ContentJob, Platform, Script } from "../domain/job.js";
+import { createFallbackMontagePlan, type Brief, type ContentJob, type Platform, type Script } from "../domain/job.js";
 
 export class MockScriptGenerator implements ScriptGenerator {
   async generate(brief: Brief): Promise<Script> {
@@ -7,6 +7,7 @@ export class MockScriptGenerator implements ScriptGenerator {
       hook: `Вы знали самое важное про «${brief.topic}»?`,
       body: `За ${brief.durationSec} секунд разберём тему «${brief.topic}» простым языком для аудитории: ${brief.audience}.`,
       callToAction: brief.callToAction ?? "Сохраните ролик и подпишитесь, чтобы не пропустить продолжение.",
+      montagePlan: createFallbackMontagePlan(brief),
     };
   }
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createFallbackScript, OpenRouterScriptGenerator, parseScriptResponse } from "../src/infrastructure/openrouter-script-generator.js";
+import { createFallbackScript, normalizeMontagePlan, OpenRouterScriptGenerator, parseScriptResponse } from "../src/infrastructure/openrouter-script-generator.js";
 import { TelegramFileClient } from "../src/infrastructure/telegram-file-client.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -35,6 +35,43 @@ describe("OpenRouter script safety", () => {
     });
     expect(script.hook).toContain("Обзор приложения");
     expect(script.callToAction.length).toBeGreaterThan(10);
+    expect(script.montagePlan?.scenes.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("sanitizes the AI montage plan and avoids paying for unused backgrounds", () => {
+    const brief = {
+      topic: "Обзор товара",
+      goal: "sales" as const,
+      audience: "покупатели",
+      tone: "живой",
+      language: "ru",
+      durationSec: 15,
+      platforms: ["youtube" as const],
+      productImageFileId: "image",
+      avatarMode: "generated" as const,
+    };
+    const script = normalizeMontagePlan(brief, {
+      hook: "Хук",
+      body: "Основной текст ролика.",
+      callToAction: "Призыв к действию.",
+      montagePlan: {
+        style: "dynamic",
+        subtitleStyle: "bold",
+        musicMood: "modern",
+        scenes: [
+          { kind: "avatar", productIndex: 5, background: "generated_1", motion: "none", transition: "fade", durationWeight: 2 },
+          { kind: "avatar", productIndex: 5, background: "generated_2", motion: "none", transition: "fade", durationWeight: 2 },
+          { kind: "avatar", productIndex: 5, background: "none", motion: "none", transition: "fade", durationWeight: 2 },
+        ],
+        generatedVisuals: [
+          { id: "generated_1", purpose: "background", prompt: "Неиспользуемый светлый рекламный фон" },
+          { id: "generated_2", purpose: "texture", prompt: "Неиспользуемая динамичная текстура фона" },
+        ],
+      },
+    });
+    expect(script.montagePlan?.scenes.some((scene) => scene.kind !== "avatar")).toBe(true);
+    expect(script.montagePlan?.generatedVisuals).toEqual([]);
+    expect(script.montagePlan?.scenes.every((scene) => scene.productIndex === 0)).toBe(true);
   });
 
   it("does not let a stalled Telegram image block script generation", async () => {

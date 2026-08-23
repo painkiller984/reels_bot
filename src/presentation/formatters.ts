@@ -27,6 +27,10 @@ export function formatJob(job: ContentJob): string {
 
   if (job.script) {
     lines.push("", `Хук: ${job.script.hook}`);
+    if (job.script.montagePlan) {
+      lines.push(`Монтаж: AI Director · ${job.script.montagePlan.scenes.length} сцен · стиль ${job.script.montagePlan.style}`);
+      lines.push(`AI-фоны: ${job.script.montagePlan.generatedVisuals.length} (товар остаётся исходным)`);
+    }
   }
   if (job.publications.some((item) => item.url)) {
     lines.push("", "Публикации:");

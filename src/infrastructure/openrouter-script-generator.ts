@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ScriptGenerator } from "../application/ports.js";
-import { productImageIds, ScriptSchema, type Brief, type Script } from "../domain/job.js";
+import { createFallbackMontagePlan, MontagePlanSchema, productImageIds, ScriptSchema, type Brief, type Script } from "../domain/job.js";
 import { TelegramFileClient } from "./telegram-file-client.js";
 
 export interface OpenRouterScriptOptions {
@@ -26,7 +26,7 @@ async function within<T>(task: Promise<T>, timeoutMs: number, label: string): Pr
   }
 }
 
-const scriptJsonSchema = {
+export const scriptJsonSchema = {
   name: "reel_script",
   strict: true,
   schema: {
@@ -35,8 +35,50 @@ const scriptJsonSchema = {
       hook: { type: "string", minLength: 1, description: "Короткий хук без приветствия" },
       body: { type: "string", minLength: 1, description: "Основная часть сценария" },
       callToAction: { type: "string", minLength: 1, description: "Призыв к действию" },
+      montagePlan: {
+        type: "object",
+        properties: {
+        style: { type: "string", enum: ["dynamic", "clean", "premium", "energetic"] },
+        subtitleStyle: { type: "string", enum: ["bold", "highlight", "minimal"] },
+        musicMood: { type: "string", enum: ["energetic", "modern", "premium", "calm"] },
+        scenes: {
+          type: "array",
+          minItems: 3,
+          maxItems: 8,
+          items: {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["product_fullscreen", "avatar_product_card", "split_product", "avatar"] },
+              productIndex: { type: "integer", minimum: 0, maximum: 5 },
+              background: { type: "string", enum: ["none", "generated_1", "generated_2"] },
+              motion: { type: "string", enum: ["zoom_in", "zoom_out", "pan_left", "pan_right", "fly_from_bottom", "fly_from_top", "slide_left", "slide_right", "pop", "none"] },
+              transition: { type: "string", enum: ["cut", "fade", "whip_left", "whip_right", "push_up", "push_down", "zoom"] },
+              durationWeight: { type: "integer", minimum: 1, maximum: 5 },
+            },
+            required: ["kind", "productIndex", "background", "motion", "transition", "durationWeight"],
+            additionalProperties: false,
+          },
+        },
+        generatedVisuals: {
+          type: "array",
+          maxItems: 2,
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", enum: ["generated_1", "generated_2"] },
+              purpose: { type: "string", enum: ["background", "lifestyle", "texture"] },
+              prompt: { type: "string", minLength: 10, maxLength: 500 },
+            },
+            required: ["id", "purpose", "prompt"],
+            additionalProperties: false,
+          },
+        },
+      },
+        required: ["style", "subtitleStyle", "musicMood", "scenes", "generatedVisuals"],
+        additionalProperties: false,
+      },
     },
-    required: ["hook", "body", "callToAction"],
+    required: ["hook", "body", "callToAction", "montagePlan"],
     additionalProperties: false,
   },
 } as const;
@@ -75,7 +117,34 @@ export function createFallbackScript(brief: Brief): Script {
       ? "Посмотрите на продукт: оцените его назначение, основные функции и удобство для вашей задачи."
       : "На изображении показан продукт для поставленной задачи. Оцените его основные функции, удобство и соответствие вашим требованиям. Перед выбором проверьте характеристики и условия использования.",
     callToAction,
+    montagePlan: createFallbackMontagePlan(brief),
   });
+}
+
+export function normalizeMontagePlan(brief: Brief, script: Script): Script {
+  const fallback = createFallbackMontagePlan(brief);
+  if (!script.montagePlan) return { ...script, montagePlan: fallback };
+  const productCount = productImageIds(brief).length;
+  let scenes = script.montagePlan.scenes.map((scene) => ({
+    ...scene,
+    productIndex: Math.min(productCount - 1, Math.max(0, scene.productIndex ?? 0)),
+  }));
+  if (!scenes.some((scene) => scene.kind !== "avatar")) {
+    scenes = [fallback.scenes[0]!, ...scenes.slice(1)];
+  }
+  const requestedVisuals = [...new Map(script.montagePlan.generatedVisuals.map((visual) => [visual.id, visual])).values()].slice(0, 2);
+  const usedIds = new Set(scenes
+    .filter((scene) => scene.kind === "product_fullscreen" && scene.background !== "none")
+    .map((scene) => scene.background));
+  const generatedVisuals = requestedVisuals.filter((visual) => usedIds.has(visual.id));
+  const generatedIds = new Set(generatedVisuals.map((visual) => visual.id));
+  scenes = scenes.map((scene) => ({
+    ...scene,
+    background: scene.kind === "product_fullscreen" && scene.background !== "none" && generatedIds.has(scene.background)
+      ? scene.background
+      : "none" as const,
+  }));
+  return { ...script, montagePlan: MontagePlanSchema.parse({ ...script.montagePlan, scenes, generatedVisuals }) };
 }
 
 export class OpenRouterScriptGenerator implements ScriptGenerator {
@@ -125,10 +194,13 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
             {
               role: "system",
               content:
-                "Ты редактор коротких вертикальных видео. Верни строго JSON-объект с полями hook, body и callToAction. " +
+                "Ты режиссёр коротких вертикальных рекламных видео. Верни строго JSON со сценарием и монтажным планом. " +
                 "Текст должен естественно звучать вслух, начинаться без приветствия, не содержать непроверяемых обещаний, " +
                 `состоять примерно из ${requestedWords} слов и быть написан на языке ${brief.language}. ` +
-                "Не добавляй служебные пометки, Markdown и пояснения.",
+                "Создай 4–7 быстрых сцен, чередуй аватара и товар, используй разные вылеты и переходы. " +
+                "generatedVisuals добавляй только когда фон действительно улучшает ролик, максимум два. " +
+                "Генерируемый кадр не должен содержать товар, упаковку, логотип, текст или вымышленный интерфейс: " +
+                "настоящий товар или скриншот будет наложен отдельно. Не добавляй Markdown и пояснения.",
             },
             {
               role: "user",
@@ -143,7 +215,7 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
         } as never), requestTimeoutMs, "OpenRouter script generation");
         const text = response.choices[0]?.message.content;
         if (!text) throw new Error("OpenRouter did not return a script");
-        return parseScriptResponse(text, brief.durationSec);
+        return normalizeMontagePlan(brief, parseScriptResponse(text, brief.durationSec));
       } catch (error) {
         if (attempt === maxAttempts) return createFallbackScript(brief);
         await new Promise((resolveDelay) => setTimeout(resolveDelay, attempt * 500));

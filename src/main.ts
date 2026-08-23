@@ -85,7 +85,11 @@ if (!config.TELEGRAM_BOT_TOKEN) {
     ? new OpenRouterBrollBackgroundGenerator({
         apiKey: config.OPENROUTER_API_KEY!,
         model: config.OPENROUTER_IMAGE_MODEL,
-        imageCount: config.OPENROUTER_BROLL_COUNT,
+        imageCount: Math.max(1, Math.min(
+          config.OPENROUTER_BROLL_COUNT,
+          Math.floor(config.OPENROUTER_BROLL_MAX_COST_USD / config.OPENROUTER_IMAGE_ESTIMATED_COST_USD),
+        )),
+        estimatedCostPerImageUsd: config.OPENROUTER_IMAGE_ESTIMATED_COST_USD,
       })
     : undefined;
   const artifactStore = config.OBJECT_STORAGE === "r2"

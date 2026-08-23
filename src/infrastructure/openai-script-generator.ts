@@ -3,6 +3,7 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import type { ScriptGenerator } from "../application/ports.js";
 import { ScriptSchema, type Brief, type Script } from "../domain/job.js";
+import { normalizeMontagePlan } from "./openrouter-script-generator.js";
 
 const ScriptReviewSchema = z.object({
   draft: ScriptSchema,
@@ -61,6 +62,6 @@ export class OpenAiScriptGenerator implements ScriptGenerator {
     if (!response.output_parsed) {
       throw new Error("LLM did not return a structured script");
     }
-    return response.output_parsed.final;
+    return normalizeMontagePlan(brief, response.output_parsed.final);
   }
 }
