@@ -121,7 +121,7 @@ export class LocalMediaPipeline implements MediaPipeline {
       : this.createSrt(job);
     await writeFile(captions, this.normalizeSrt(captionsSource), "utf8");
     const subtitlePath = captions.replace(/\\/g, "/").replace(":", "\\:").replace(/'/g, "\\'");
-    const subtitleStyle = "FontName=Arial,FontSize=8,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1.5,Shadow=1,Alignment=2,MarginL=100,MarginR=100,MarginV=135";
+    const subtitleStyle = "FontName=Arial,FontSize=8,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1.5,Shadow=1,Alignment=2,MarginL=100,MarginR=100,MarginV=50";
     const musicFile = resolve(directory, "music.mp3");
     let hasMusic = false;
     if (this.options.downloadBackgroundMusic) {
@@ -137,12 +137,12 @@ export class LocalMediaPipeline implements MediaPipeline {
       await this.options.downloadTelegramImage(job.brief.productImageFileId, productImage);
       const musicInput = hasMusic ? ["-stream_loop", "-1", "-i", musicFile] : [];
       const musicFilter = hasMusic
-        ? `;[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[voice];[2:a]volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, targetDuration - 1)}:d=1,atrim=duration=${targetDuration}[music];[voice][music]amix=inputs=2:duration=first:dropout_transition=2,apad=whole_dur=${targetDuration}[outa]`
+        ? `;[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[voice];[2:a]volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, targetDuration - 1)}:d=1,atrim=duration=${targetDuration}[music];[voice][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,apad=whole_dur=${targetDuration}[outa]`
         : `;[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=${targetDuration}[outa]`;
       const productFadeOut = Math.max(1, targetDuration - 0.6);
       await this.ffmpeg([
         "-y", "-i", avatarUri, "-loop", "1", "-i", productImage, ...musicInput,
-        "-filter_complex", `[1:v]scale=300:300:force_original_aspect_ratio=decrease,pad=320:320:(ow-iw)/2:(oh-ih)/2:color=white,format=rgba,fade=t=in:st=0:d=0.5:alpha=1,fade=t=out:st=${productFadeOut}:d=0.5:alpha=1[product];[0:v][product]overlay=W-w-48:80:shortest=1[withproduct];[withproduct]subtitles='${subtitlePath}':force_style='${subtitleStyle}'[outv]${musicFilter}`,
+        "-filter_complex", `[1:v]scale=200:200:force_original_aspect_ratio=decrease,pad=220:220:(ow-iw)/2:(oh-ih)/2:color=white,format=rgba,fade=t=in:st=0:d=0.5:alpha=1,fade=t=out:st=${productFadeOut}:d=0.5:alpha=1[product];[0:v][product]overlay=36:60:shortest=1[withproduct];[withproduct]subtitles='${subtitlePath}':force_style='${subtitleStyle}'[outv]${musicFilter}`,
         "-map", "[outv]", "-map", "[outa]", "-t", String(targetDuration), "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-c:a", "aac", "-shortest", "-movflags", "+faststart", output,
       ]);
       return output;
@@ -150,7 +150,7 @@ export class LocalMediaPipeline implements MediaPipeline {
     if (hasMusic) {
       await this.ffmpeg([
         "-y", "-i", avatarUri, "-stream_loop", "-1", "-i", musicFile,
-        "-filter_complex", `[0:v]subtitles='${subtitlePath}':force_style='${subtitleStyle}'[outv];[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[voice];[1:a]volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, targetDuration - 1)}:d=1,atrim=duration=${targetDuration}[music];[voice][music]amix=inputs=2:duration=first:dropout_transition=2,apad=whole_dur=${targetDuration}[outa]`,
+        "-filter_complex", `[0:v]subtitles='${subtitlePath}':force_style='${subtitleStyle}'[outv];[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[voice];[1:a]volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, targetDuration - 1)}:d=1,atrim=duration=${targetDuration}[music];[voice][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,apad=whole_dur=${targetDuration}[outa]`,
         "-map", "[outv]", "-map", "[outa]", "-t", String(targetDuration), "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-c:a", "aac", "-shortest", "-movflags", "+faststart", output,
       ]);
       return output;
@@ -303,6 +303,19 @@ export class LocalMediaPipeline implements MediaPipeline {
       }
     }
     if (current) lines.push(current);
+    for (let index = 0; index + 1 < lines.length; index += 2) {
+      const firstWords = lines[index]!.split(" ");
+      let second = lines[index + 1]!;
+      while (firstWords.length > 1 && second.length < Math.floor(maxLineLength * 0.35)) {
+        const moved = firstWords.at(-1)!;
+        const candidate = `${moved} ${second}`;
+        if (candidate.length > maxLineLength) break;
+        firstWords.pop();
+        second = candidate;
+      }
+      lines[index] = firstWords.join(" ");
+      lines[index + 1] = second;
+    }
     const pages: string[] = [];
     for (let index = 0; index < lines.length; index += maxLines) pages.push(lines.slice(index, index + maxLines).join("\n"));
     return pages.length > 0 ? pages : [text.slice(0, maxLineLength)];
