@@ -1,5 +1,6 @@
 import pino from "pino";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { webhookCallback } from "grammy";
 import { readConfig } from "./config.js";
 import { createContainer } from "./container.js";
@@ -25,6 +26,15 @@ import { HeyGenMusicClient } from "./infrastructure/heygen-music-client.js";
 
 const config = readConfig();
 const logger = pino({ level: config.LOG_LEVEL });
+const require = createRequire(import.meta.url);
+const bundledFfmpeg = require("ffmpeg-static") as string | null;
+const bundledFfprobe = (require("ffprobe-static") as { path?: string }).path;
+const ffmpegPath = config.FFMPEG_PATH === "ffmpeg" && bundledFfmpeg
+  ? bundledFfmpeg
+  : resolveExecutable(config.FFMPEG_PATH, "ffmpeg");
+const ffprobePath = config.FFPROBE_PATH === "ffprobe" && bundledFfprobe
+  ? bundledFfprobe
+  : resolveExecutable(config.FFPROBE_PATH, "ffprobe");
 
 if (!config.TELEGRAM_BOT_TOKEN) {
   logger.error("TELEGRAM_BOT_TOKEN is required. Copy .env.example to .env and add the token.");
@@ -61,8 +71,8 @@ if (!config.TELEGRAM_BOT_TOKEN) {
   const media = config.MEDIA_MODE === "local"
     ? new LocalMediaPipeline({
         artifactsDir: config.ARTIFACTS_DIR,
-        ffmpegPath: resolveExecutable(config.FFMPEG_PATH, "ffmpeg"),
-        ffprobePath: resolveExecutable(config.FFPROBE_PATH, "ffprobe"),
+        ffmpegPath,
+        ffprobePath,
         ...(speechSynthesizer ? { speechSynthesizer } : {}),
         ...(avatarGenerator ? { avatarGenerator } : {}),
         avatarHandlesSpeech: config.TTS_PROVIDER === "heygen",
