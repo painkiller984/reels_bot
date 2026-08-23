@@ -141,6 +141,33 @@ describe("OpenRouter script safety", () => {
     expect(script.hook).toBe("Учёт без лишней рутины.");
   });
 
+  it("does not create a production script without the mandatory product image", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    const generator = new OpenRouterScriptGenerator({
+      apiKey: "test",
+      model: "test",
+      telegramFiles: new TelegramFileClient("test"),
+      imageLoadTimeoutMs: 20,
+      requestTimeoutMs: 100,
+      maxAttempts: 1,
+      allowFallback: false,
+    });
+
+    await expect(generator.generate({
+      topic: "Обязательный анализ товара",
+      goal: "sales",
+      audience: "покупатели",
+      tone: "живой",
+      language: "ru",
+      durationSec: 15,
+      platforms: ["youtube"],
+      productImageFileId: "telegram-image",
+      avatarMode: "generated",
+    })).rejects.toThrow(/обязательное изображение продукта/u);
+  });
+
   it("falls back quickly when the free OpenRouter route stalls", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => await new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });

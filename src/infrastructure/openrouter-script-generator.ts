@@ -195,6 +195,9 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
           event: "script_image_context_unavailable",
           message: error instanceof Error ? error.message.slice(0, 300) : "unknown error",
         }));
+        if (this.options.allowFallback === false) {
+          throw new Error(`Не удалось загрузить обязательное изображение продукта для анализа: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     }
     const requestedWords = Math.max(15, Math.round(brief.durationSec * 2.05));
