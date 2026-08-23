@@ -162,7 +162,7 @@ export class LocalMediaPipeline implements MediaPipeline {
           generatedBackgrounds,
           montagePlan,
           targetDuration,
-          musicFile: hasMusic ? musicFile : undefined,
+          ...(hasMusic ? { musicFile } : {}),
           directory,
           output,
         });
