@@ -153,6 +153,21 @@ export class LocalMediaPipeline implements MediaPipeline {
         }
       }
       const montageImages = [...suppliedProductImages, ...generatedBackgrounds.map((background) => background.path)];
+      if ((this.options.outputWidth ?? 720) < 720) {
+        await this.renderStagedMontage({
+          avatarUri,
+          captions: subtitlePath,
+          subtitleStyle,
+          suppliedProductImages,
+          generatedBackgrounds,
+          montagePlan,
+          targetDuration,
+          musicFile: hasMusic ? musicFile : undefined,
+          directory,
+          output,
+        });
+        return output;
+      }
       const imageInputs = montageImages.flatMap((productImage) => ["-loop", "1", "-framerate", "25", "-i", productImage]);
       const musicInputIndex = montageImages.length + 1;
       const musicInput = hasMusic ? ["-stream_loop", "-1", "-i", musicFile] : [];
@@ -295,6 +310,103 @@ export class LocalMediaPipeline implements MediaPipeline {
     } catch {
       return 0;
     }
+  }
+
+  private async renderStagedMontage(input: {
+    avatarUri: string;
+    captions: string;
+    subtitleStyle: string;
+    suppliedProductImages: string[];
+    generatedBackgrounds: GeneratedBackground[];
+    montagePlan: MontagePlan;
+    targetDuration: number;
+    musicFile?: string;
+    directory: string;
+    output: string;
+  }): Promise<void> {
+    const width = this.options.outputWidth ?? 540;
+    const height = this.options.outputHeight ?? 960;
+    const foregroundWidth = Math.round(width * 650 / 720);
+    const foregroundHeight = Math.round(height * 1080 / 1280);
+    const totalWeight = Math.max(1, input.montagePlan.scenes.reduce((sum, scene) => sum + scene.durationWeight, 0));
+    let cursor = 0;
+    const segmentFiles: string[] = [];
+
+    for (const [index, scene] of input.montagePlan.scenes.entries()) {
+      const end = index === input.montagePlan.scenes.length - 1
+        ? input.targetDuration
+        : cursor + input.targetDuration * scene.durationWeight / totalWeight;
+      const sceneLength = Math.max(0.1, end - cursor);
+      const segment = resolve(input.directory, `montage-segment-${index}.mp4`);
+      console.info(JSON.stringify({ event: "montage_scene_started", scene: index + 1, total: input.montagePlan.scenes.length, kind: scene.kind }));
+      const base = `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,fps=25`;
+      const commonOutput = [
+        "-map", "[outv]", "-an", "-t", sceneLength.toFixed(3),
+        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+        "-threads", "1", "-crf", "24", "-pix_fmt", "yuv420p", "-r", "25",
+        "-video_track_timescale", "90000", segment,
+      ];
+
+      if (scene.kind === "avatar") {
+        await this.ffmpeg([
+          "-y", "-ss", cursor.toFixed(3), "-t", sceneLength.toFixed(3), "-i", input.avatarUri,
+          "-filter_threads", "1", "-filter_complex", `${base}[outv]`, ...commonOutput,
+        ]);
+      } else {
+        const productIndex = Math.min(input.suppliedProductImages.length - 1, Math.max(0, scene.productIndex ?? 0));
+        const productImage = input.suppliedProductImages[productIndex]!;
+        const background = scene.background
+          ? input.generatedBackgrounds.find((item) => item.id === scene.background)?.path
+          : undefined;
+        const imageInputs = ["-loop", "1", "-framerate", "25", "-i", productImage];
+        if (background) imageInputs.push("-loop", "1", "-framerate", "25", "-i", background);
+        const fade = scene.transition === "cut" ? 0.02 : Math.min(0.28, Math.max(0.12, sceneLength / 5));
+        const fadeOut = Math.max(0, sceneLength - fade).toFixed(3);
+        let filter: string;
+
+        if (scene.kind === "product_fullscreen") {
+          const backgroundFilter = background
+            ? `[2:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},eq=brightness=-0.14[bg]`
+            : `[1:v]split=2[bgsrc][fgsrc];[bgsrc]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=16:1,eq=brightness=-0.24:saturation=1.15[bg]`;
+          const foregroundInput = background ? "[1:v]" : "[fgsrc]";
+          filter = `${backgroundFilter};${foregroundInput}scale=${foregroundWidth}:${foregroundHeight}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,${this.fullscreenMotion(scene, sceneLength, width, height)},format=yuv420p,fade=t=in:st=0:d=${fade.toFixed(3)},fade=t=out:st=${fadeOut}:d=${fade.toFixed(3)}[outv]`;
+        } else {
+          const split = scene.kind === "split_product";
+          const size = Math.round((split ? 430 : 250) * width / 720);
+          const content = Math.round((split ? 400 : 220) * width / 720);
+          const pop = scene.motion === "pop"
+            ? `,zoompan=z='min(zoom+0.006,1.13)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${size}x${size}:fps=25`
+            : "";
+          const position = this.scenePosition(scene, 0, split, index);
+          filter = `${base}[avatar];[1:v]scale=${content}:${content}:force_original_aspect_ratio=decrease,pad=${size}:${size}:(ow-iw)/2:(oh-ih)/2:color=white${pop},format=rgba,fade=t=in:st=0:d=${fade.toFixed(3)}:alpha=1,fade=t=out:st=${fadeOut}:d=${fade.toFixed(3)}:alpha=1[product];[avatar][product]overlay=x='${position.x}':y='${position.y}':eof_action=pass[outv]`;
+        }
+        await this.ffmpeg([
+          "-y", "-ss", cursor.toFixed(3), "-t", sceneLength.toFixed(3), "-i", input.avatarUri,
+          ...imageInputs, "-filter_complex_threads", "1", "-filter_complex", filter, ...commonOutput,
+        ]);
+      }
+      segmentFiles.push(segment);
+      console.info(JSON.stringify({ event: "montage_scene_completed", scene: index + 1, total: input.montagePlan.scenes.length }));
+      cursor = end;
+    }
+
+    const concatList = resolve(input.directory, "montage-segments.txt");
+    await writeFile(concatList, segmentFiles.map((file) => `file '${file.replace(/'/g, "'\\''")}'`).join("\n"), "utf8");
+    const montageBase = resolve(input.directory, "montage-base.mp4");
+    await this.ffmpeg(["-y", "-f", "concat", "-safe", "0", "-i", concatList, "-c", "copy", montageBase]);
+
+    const musicInput = input.musicFile ? ["-stream_loop", "-1", "-i", input.musicFile] : [];
+    const musicFilter = input.musicFile
+      ? `;[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[voice];[2:a]aresample=48000,volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, input.targetDuration - 1)}:d=1,atrim=duration=${input.targetDuration}[music];[voice][music]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0,atrim=duration=${input.targetDuration},apad=whole_dur=${input.targetDuration}[outa]`
+      : `;[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=${input.targetDuration}[outa]`;
+    await this.ffmpeg([
+      "-y", "-filter_complex_threads", "1", "-i", montageBase, "-i", input.avatarUri, ...musicInput,
+      "-filter_complex", `[0:v]subtitles='${input.captions}':force_style='${input.subtitleStyle}'[outv]${musicFilter}`,
+      "-map", "[outv]", "-map", "[outa]", "-t", String(input.targetDuration),
+      "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-threads", "1", "-crf", "22",
+      "-c:a", "aac", "-shortest", "-movflags", "+faststart", input.output,
+    ]);
+    console.info(JSON.stringify({ event: "montage_completed", scenes: segmentFiles.length }));
   }
 
   private productMontageFilter(productCount: number, backgrounds: GeneratedBackground[], duration: number, plan: MontagePlan): { filter: string; output: string } {
