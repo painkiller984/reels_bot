@@ -5,6 +5,7 @@ import type { ArtifactStore, JobRepository, MediaPipeline, ScriptGenerator, Soci
 
 export class JobNotFoundError extends Error {}
 export class JobAccessError extends Error {}
+const automaticRecoveryMarker = "[automatic-recovery-attempted]";
 
 export class JobService {
   constructor(
@@ -57,6 +58,7 @@ export class JobService {
     for (const artifact of job.artifacts) {
       artifact.uri = await this.artifactStore.persist(job.id, artifact);
     }
+    delete job.error;
     await this.jobs.save(job);
     await this.move(job, "ready_for_approval");
     return job;
@@ -111,12 +113,15 @@ export class JobService {
 
   async resetProductionAfterRestart(userId: string, id: string): Promise<ContentJob> {
     let job = await this.ownedJob(userId, id);
+    if (job.error?.includes(automaticRecoveryMarker)) {
+      return this.fail(userId, id, "Автоматическое восстановление уже выполнялось. Используйте /retry после проверки настроек, чтобы избежать цикла перезапусков");
+    }
     if (job.status !== "brief_ready") {
       job = await this.fail(userId, id, "Производство было прервано перезапуском и поставлено заново");
       if (job.status !== "failed") return job;
       await this.move(job, "brief_ready");
     }
-    delete job.error;
+    job.error = `${automaticRecoveryMarker} Производство один раз автоматически восстановлено после перезапуска`;
     delete job.script;
     job.artifacts = [];
     job.updatedAt = new Date();

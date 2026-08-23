@@ -14,6 +14,7 @@ export function createContainer(
   scripts: ScriptGenerator = new MockScriptGenerator(),
   publisher: SocialPublisher = new MockSocialPublisher(),
   artifactStore: ArtifactStore = new LocalArtifactStore(),
+  autoRecoverProduction = true,
 ) {
   const jobService = new JobService(
     repository,
@@ -23,6 +24,6 @@ export function createContainer(
     artifactStore,
   );
   const queue = new InProcessJobQueue(jobService, onQueueError);
-  const recovery = new RecoveryService(repository, jobService, queue);
+  const recovery = new RecoveryService(repository, jobService, queue, autoRecoverProduction);
   return { repository, jobService, queue, recovery };
 }

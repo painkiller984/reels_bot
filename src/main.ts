@@ -5,6 +5,7 @@ import { webhookCallback } from "grammy";
 import { readConfig } from "./config.js";
 import { createContainer } from "./container.js";
 import { createBot } from "./presentation/bot.js";
+import { DraftStore } from "./presentation/draft-store.js";
 import { createPrismaClient } from "./infrastructure/database.js";
 import { PrismaJobRepository } from "./infrastructure/prisma-job-repository.js";
 import { FileJobRepository } from "./infrastructure/file-job-repository.js";
@@ -149,14 +150,14 @@ if (!config.TELEGRAM_BOT_TOKEN) {
   const publisher = youtube ? new YoutubePublisher(youtube, config.YOUTUBE_PRIVACY_STATUS, artifactStore) : new MockSocialPublisher();
   const { jobService, queue, recovery } = createContainer(repository, (kind, jobId, error) => {
     logger.error({ kind, jobId, error }, "Background task failed");
-  }, media, scripts, publisher, artifactStore);
+  }, media, scripts, publisher, artifactStore, config.AUTO_RECOVER_PRODUCTION);
   const bot = createBot(config.TELEGRAM_BOT_TOKEN, jobService, queue, {
     storage: `${prisma ? "PostgreSQL" : "file"} + ${artifactStore.name}`,
     scripts: scriptLabel,
     media: config.MEDIA_MODE === "local" ? `FFmpeg + ${config.TTS_PROVIDER} TTS` : config.MEDIA_MODE,
     avatar: avatarGenerator ? "heygen" : "placeholder",
     publishing: youtube ? "youtube" : "disabled",
-  }, artifactStore, youtube);
+  }, artifactStore, youtube, new DraftStore(prisma));
   const webhookBaseUrl = config.TELEGRAM_WEBHOOK_URL ?? process.env.RENDER_EXTERNAL_URL;
   const webhookSecret = createHash("sha256").update(config.TELEGRAM_BOT_TOKEN).digest("hex");
   const telegramWebhook = webhookBaseUrl

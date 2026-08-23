@@ -2,7 +2,7 @@ import type { JobStatus } from "./job.js";
 
 const transitions: Readonly<Record<JobStatus, readonly JobStatus[]>> = {
   draft: ["brief_ready", "cancelled"],
-  brief_ready: ["script_generating", "needs_user_input", "cancelled"],
+  brief_ready: ["script_generating", "needs_user_input", "failed", "cancelled"],
   script_generating: ["script_review", "failed", "cancelled"],
   script_review: ["audio_generating", "script_generating", "needs_user_input", "failed", "cancelled"],
   audio_generating: ["avatar_generating", "failed", "cancelled"],

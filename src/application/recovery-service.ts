@@ -23,6 +23,7 @@ export class RecoveryService {
     private readonly repository: JobRepository,
     private readonly jobs: JobService,
     private readonly queue: JobQueue,
+    private readonly autoRecoverProduction = true,
   ) {}
 
   async recover(): Promise<RecoveryResult> {
@@ -34,6 +35,10 @@ export class RecoveryService {
       if (job.status === "publishing") {
         await this.jobs.fail(job.userId, job.id, "Публикация была прервана. Повторите её вручную, чтобы избежать дублей");
         publicationsStopped += 1;
+        continue;
+      }
+      if (!this.autoRecoverProduction) {
+        await this.jobs.fail(job.userId, job.id, "Производство было прервано перезапуском. Используйте /retry для безопасного ручного повторения");
         continue;
       }
       const reset = await this.jobs.resetProductionAfterRestart(job.userId, job.id);

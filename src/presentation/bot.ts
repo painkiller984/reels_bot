@@ -132,7 +132,7 @@ function completedBrief(draft: BriefDraft): unknown {
 
 async function acceptImage(ctx: Context, drafts: DraftStore, fileId: string): Promise<void> {
   const userId = userIdOf(ctx);
-  const draft = drafts.get(userId);
+  const draft = await drafts.get(userId);
   if (!draft || !["product_image", "avatar_image"].includes(draft.stage)) {
     await ctx.reply("Чтобы добавить изображение к ролику, сначала запустите /create.");
     return;
@@ -143,21 +143,25 @@ async function acceptImage(ctx: Context, drafts: DraftStore, fileId: string): Pr
       await ctx.reply("Уже добавлено максимум 6 изображений. Нажмите «Готово — перейти дальше».", { reply_markup: productImagesKeyboard() });
       return;
     }
+    if (existing.includes(fileId)) {
+      await ctx.reply(`Это изображение уже принято. Сейчас загружено: ${existing.length}.`, { reply_markup: productImagesKeyboard() });
+      return;
+    }
     const productImageFileIds = [...existing, fileId];
-    drafts.update(userId, { productImageFileId: productImageFileIds[0]!, productImageFileIds });
+    await drafts.update(userId, { productImageFileId: productImageFileIds[0]!, productImageFileIds });
     await ctx.reply(
       `Изображение ${productImageFileIds.length}/6 принято. Пришлите ещё изображения для смены сцен или нажмите «Готово — перейти дальше».`,
       { reply_markup: productImagesKeyboard() },
     );
   } else {
-    drafts.update(userId, { avatarImageFileId: fileId, stage: "goal" });
+    await drafts.update(userId, { avatarImageFileId: fileId, stage: "goal" });
     await ctx.reply("Фото аватара принято. Шаг 4/9. Какая цель ролика?", { reply_markup: goalKeyboard() });
   }
 }
 
-export function createBot(token: string, jobs: JobService, queue: JobQueue, capabilities: BotCapabilities, artifactStore: ArtifactStore, youtube?: YoutubeConnection): Bot {
+export function createBot(token: string, jobs: JobService, queue: JobQueue, capabilities: BotCapabilities, artifactStore: ArtifactStore, youtube?: YoutubeConnection, draftStore?: DraftStore): Bot {
   const bot = new Bot(token);
-  const drafts = new DraftStore();
+  const drafts = draftStore ?? new DraftStore();
 
   // bot.catch only protects long polling. This middleware also protects webhook mode.
   bot.use(async (ctx, next) => {
@@ -187,24 +191,27 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
   bot.command("create", async (ctx) => {
     const userId = userIdOf(ctx);
     const topic = argumentOf(ctx.message?.text);
-    drafts.start(userId, topic || undefined);
+    await drafts.start(userId, topic || undefined);
     if (!topic) await ctx.reply("Шаг 1/9. Пришлите тему ролика одним сообщением.");
     else {
-      drafts.update(userId, { stage: "product_image" });
+      await drafts.update(userId, { stage: "product_image" });
       await ctx.reply("Шаг 2/9. Пришлите от 1 до 6 изображений продукта или экранов приложения. После загрузки нажмите кнопку «Готово».");
     }
   });
 
   const completeProductImages = async (ctx: Context): Promise<void> => {
     const userId = userIdOf(ctx);
-    const draft = drafts.get(userId);
-    if (!draft || draft.stage !== "product_image") return;
+    const draft = await drafts.get(userId);
+    if (!draft || draft.stage !== "product_image") {
+      await ctx.reply("Сессия создания не найдена. Запустите /create ещё раз — после исправления следующие шаги сохраняются между перезапусками.");
+      return;
+    }
     const imageCount = draft.productImageFileIds?.length ?? (draft.productImageFileId ? 1 : 0);
     if (imageCount === 0) {
       await ctx.reply("Нужно минимум одно изображение продукта, логотип или скриншот приложения.");
       return;
     }
-    drafts.update(userId, { stage: "avatar_mode" });
+    await drafts.update(userId, { stage: "avatar_mode" });
     await ctx.reply(`Принято изображений: ${imageCount}. Шаг 3/9. Как создать ведущего?`, { reply_markup: avatarKeyboard() });
   };
 
@@ -216,40 +223,40 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
 
   bot.callbackQuery(/^brief:goal:(reach|sales|education|engagement)$/, async (ctx) => {
     const goal = ctx.match[1] as Brief["goal"];
-    const draft = drafts.update(userIdOf(ctx), { goal, stage: "audience" });
+    const draft = await drafts.update(userIdOf(ctx), { goal, stage: "audience" });
     await ctx.answerCallbackQuery();
     if (draft) await ctx.reply("Шаг 5/9. Опишите целевую аудиторию.");
   });
 
   bot.callbackQuery(/^brief:tone:(.+)$/, async (ctx) => {
-    const draft = drafts.update(userIdOf(ctx), { tone: ctx.match[1]!, stage: "duration" });
+    const draft = await drafts.update(userIdOf(ctx), { tone: ctx.match[1]!, stage: "duration" });
     await ctx.answerCallbackQuery();
     if (draft) await ctx.reply("Шаг 7/9. Выберите длительность.", { reply_markup: durationKeyboard() });
   });
 
   bot.callbackQuery(/^brief:duration:(15|30|45|60)$/, async (ctx) => {
-    const draft = drafts.update(userIdOf(ctx), { durationSec: Number(ctx.match[1]), stage: "platforms" });
+    const draft = await drafts.update(userIdOf(ctx), { durationSec: Number(ctx.match[1]), stage: "platforms" });
     await ctx.answerCallbackQuery();
     if (draft) await ctx.reply("Шаг 8/9. Куда планируется публикация?", { reply_markup: platformKeyboard() });
   });
 
   bot.callbackQuery("brief:platforms:youtube", async (ctx) => {
     const platforms: Platform[] = ["youtube"];
-    const draft = drafts.update(userIdOf(ctx), { platforms, stage: "cta" });
+    const draft = await drafts.update(userIdOf(ctx), { platforms, stage: "cta" });
     await ctx.answerCallbackQuery();
     if (draft) await ctx.reply("Шаг 9/9. Пришлите призыв к действию или напишите /skip.");
   });
 
   bot.command("skip", async (ctx) => {
-    const draft = drafts.get(userIdOf(ctx));
+    const draft = await drafts.get(userIdOf(ctx));
     if (!draft) return;
     if (draft.stage === "product_image") {
       await ctx.reply("Фото продукта обязательно. Пришлите фотографию, логотип или скриншот приложения.");
       return;
     }
     if (draft.stage !== "cta") return;
-    drafts.update(userIdOf(ctx), { stage: "confirm" });
-    await ctx.reply(draftSummary(drafts.get(userIdOf(ctx))!), {
+    const updated = await drafts.update(userIdOf(ctx), { stage: "confirm" });
+    await ctx.reply(draftSummary(updated!), {
       reply_markup: new InlineKeyboard().text("Создать", "brief:confirm").text("Отмена", "brief:cancel"),
     });
   });
@@ -259,13 +266,13 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     const userId = userIdOf(ctx);
     await ctx.answerCallbackQuery();
     if (choice === "generated") {
-      drafts.update(userId, { avatarMode: "generated", stage: "goal" });
+      await drafts.update(userId, { avatarMode: "generated", stage: "goal" });
       await ctx.reply("Шаг 4/9. Какая цель ролика?", { reply_markup: goalKeyboard() });
     } else if (choice === "describe") {
-      drafts.update(userId, { avatarMode: "generated", stage: "avatar_prompt" });
+      await drafts.update(userId, { avatarMode: "generated", stage: "avatar_prompt" });
       await ctx.reply("Этот вариант создаст новый HeyGen-аватар и добавит примерно $1 к стоимости. Опишите внешность ведущего: пол, возраст, одежду и стиль.");
     } else {
-      drafts.update(userId, { avatarMode: "photo", stage: "avatar_image" });
+      await drafts.update(userId, { avatarMode: "photo", stage: "avatar_image" });
       await ctx.reply("Создание аватара из фото добавит примерно $1 к стоимости. Пришлите фронтальную фотографию человека с хорошим освещением.");
     }
   });
@@ -285,39 +292,39 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
 
   bot.callbackQuery("brief:confirm", async (ctx) => {
     const userId = userIdOf(ctx);
-    const draft = drafts.get(userId);
+    const draft = await drafts.get(userId);
     await ctx.answerCallbackQuery();
     if (!draft || draft.stage !== "confirm") return;
     const job = await jobs.create(userId, completedBrief(draft));
-    drafts.delete(userId);
+    await drafts.delete(userId);
     queue.enqueue("produce", userId, job.id);
     await ctx.reply(`Задача #${job.id} добавлена в очередь.\nПроверить: /status ${job.id}`);
   });
 
   bot.callbackQuery("brief:cancel", async (ctx) => {
-    drafts.delete(userIdOf(ctx));
+    await drafts.delete(userIdOf(ctx));
     await ctx.answerCallbackQuery();
     await ctx.reply("Создание отменено.");
   });
 
   bot.on("message:text", async (ctx, next) => {
     const userId = userIdOf(ctx);
-    const draft = drafts.get(userId);
+    const draft = await drafts.get(userId);
     if (!draft || ctx.message.text.startsWith("/")) return next();
     if (draft.stage === "topic") {
       if (ctx.message.text.trim().length < 3) return void await ctx.reply("Тема слишком короткая.");
-      drafts.update(userId, { topic: ctx.message.text.trim(), stage: "product_image" });
+      await drafts.update(userId, { topic: ctx.message.text.trim(), stage: "product_image" });
       await ctx.reply("Шаг 2/9. Пришлите от 1 до 6 изображений продукта или экранов приложения. После загрузки нажмите кнопку «Готово».");
     } else if (draft.stage === "audience") {
-      drafts.update(userId, { audience: ctx.message.text.trim(), stage: "tone" });
+      await drafts.update(userId, { audience: ctx.message.text.trim(), stage: "tone" });
       await ctx.reply("Шаг 6/9. Выберите тон.", { reply_markup: toneKeyboard() });
     } else if (draft.stage === "avatar_prompt") {
       const avatarPrompt = ctx.message.text.trim();
       if (avatarPrompt.length < 3) return void await ctx.reply("Описание слишком короткое.");
-      drafts.update(userId, { avatarPrompt, stage: "goal" });
+      await drafts.update(userId, { avatarPrompt, stage: "goal" });
       await ctx.reply("Шаг 4/9. Какая цель ролика?", { reply_markup: goalKeyboard() });
     } else if (draft.stage === "cta") {
-      const updated = drafts.update(userId, { callToAction: ctx.message.text.trim(), stage: "confirm" });
+      const updated = await drafts.update(userId, { callToAction: ctx.message.text.trim(), stage: "confirm" });
       await ctx.reply(draftSummary(updated!), {
         reply_markup: new InlineKeyboard().text("Создать", "brief:confirm").text("Отмена", "brief:cancel"),
       });

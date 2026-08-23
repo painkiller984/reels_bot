@@ -13,6 +13,7 @@ const ConfigSchema = z.object({
   APP_ENV: z.enum(["development", "test", "production"]).default("development"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   PORT: z.coerce.number().int().min(1).max(65535).default(10000),
+  AUTO_RECOVER_PRODUCTION: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
   TELEGRAM_BOT_TOKEN: optionalString,
   TELEGRAM_WEBHOOK_URL: optionalString,
   DATABASE_URL: optionalPostgresUrl,

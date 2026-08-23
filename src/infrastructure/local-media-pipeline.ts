@@ -159,17 +159,17 @@ export class LocalMediaPipeline implements MediaPipeline {
         : `;[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=${targetDuration}[outa]`;
       const productVideoFilter = this.productMontageFilter(suppliedProductImages.length, generatedBackgrounds, targetDuration, montagePlan);
       await this.ffmpeg([
-        "-y", "-i", avatarUri, ...imageInputs, ...musicInput,
+        "-y", "-filter_complex_threads", "1", "-i", avatarUri, ...imageInputs, ...musicInput,
         "-filter_complex", `${productVideoFilter.filter};${productVideoFilter.output}subtitles='${subtitlePath}':force_style='${subtitleStyle}'[outv]${musicFilter}`,
-        "-map", "[outv]", "-map", "[outa]", "-t", String(targetDuration), "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-c:a", "aac", "-shortest", "-movflags", "+faststart", output,
+        "-map", "[outv]", "-map", "[outa]", "-t", String(targetDuration), "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-threads", "1", "-crf", "22", "-c:a", "aac", "-shortest", "-movflags", "+faststart", output,
       ]);
       return output;
     }
     if (hasMusic) {
       await this.ffmpeg([
-        "-y", "-i", avatarUri, "-stream_loop", "-1", "-i", musicFile,
+        "-y", "-filter_complex_threads", "1", "-i", avatarUri, "-stream_loop", "-1", "-i", musicFile,
         "-filter_complex", `[0:v]subtitles='${subtitlePath}':force_style='${subtitleStyle}'[outv];[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[voice];[1:a]aresample=48000,volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, targetDuration - 1)}:d=1,atrim=duration=${targetDuration}[music];[voice][music]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0,atrim=duration=${targetDuration},apad=whole_dur=${targetDuration}[outa]`,
-        "-map", "[outv]", "-map", "[outa]", "-t", String(targetDuration), "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-c:a", "aac", "-shortest", "-movflags", "+faststart", output,
+        "-map", "[outv]", "-map", "[outa]", "-t", String(targetDuration), "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-threads", "1", "-crf", "22", "-c:a", "aac", "-shortest", "-movflags", "+faststart", output,
       ]);
       return output;
     }
@@ -177,7 +177,7 @@ export class LocalMediaPipeline implements MediaPipeline {
       "-y", "-i", avatarUri,
       "-vf", `subtitles='${subtitlePath}':force_style='${subtitleStyle}'`,
       "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-      "-t", String(targetDuration), "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-c:a", "aac", "-movflags", "+faststart", output,
+      "-t", String(targetDuration), "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-threads", "1", "-crf", "22", "-c:a", "aac", "-movflags", "+faststart", output,
     ]);
     return output;
   }

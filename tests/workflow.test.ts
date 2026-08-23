@@ -51,6 +51,32 @@ describe("content workflow", () => {
     expect((await jobService.get("user-3", job.id)).status).toBe("ready_for_approval");
   });
 
+  it("does not endlessly recover the same crashing production", async () => {
+    const { repository, jobService } = createContainer();
+    const job = await jobService.create("user-recovery-loop", { topic: "Защита от цикла", productImageFileId });
+    job.status = "rendering";
+    await repository.save(job);
+
+    const first = await jobService.resetProductionAfterRestart("user-recovery-loop", job.id);
+    expect(first.status).toBe("brief_ready");
+    expect(first.error).toContain("automatic-recovery-attempted");
+
+    const second = await jobService.resetProductionAfterRestart("user-recovery-loop", job.id);
+    expect(second.status).toBe("failed");
+    expect(second.error).toContain("Автоматическое восстановление уже выполнялось");
+  });
+
+  it("can stop interrupted jobs instead of restarting them on a small cloud instance", async () => {
+    const { repository, jobService, recovery } = createContainer(undefined, undefined, undefined, undefined, undefined, undefined, false);
+    const job = await jobService.create("user-safe-recovery", { topic: "Ручное восстановление", productImageFileId });
+    job.status = "rendering";
+    await repository.save(job);
+
+    const result = await recovery.recover();
+    expect(result.productionRequeued).toBe(0);
+    expect((await jobService.get("user-safe-recovery", job.id)).status).toBe("failed");
+  });
+
   it("retries a failed production from the beginning", async () => {
     const { repository, jobService, queue } = createContainer();
     const job = await jobService.create("user-4", { topic: "Повтор после ошибки", productImageFileId });
