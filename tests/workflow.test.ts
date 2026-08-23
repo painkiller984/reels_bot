@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createContainer } from "../src/container.js";
 import { InvalidTransitionError, assertTransition } from "../src/domain/workflow.js";
+import type { MediaPipeline } from "../src/application/ports.js";
 
 describe("content workflow", () => {
   const productImageFileId = "telegram-product-image";
@@ -20,6 +21,32 @@ describe("content workflow", () => {
     const published = await jobService.publish("user-1", job.id);
     expect(published.status).toBe("published");
     expect(published.publications.every((item) => item.status === "published")).toBe(true);
+  });
+
+  it("does not persist HeyGen integrated TTS control URIs as files", async () => {
+    const media: MediaPipeline = {
+      synthesizeSpeech: async () => "heygen://tts/integrated",
+      createAvatar: async () => "avatar.mp4",
+      render: async () => "final.mp4",
+      validate: async () => "quality.json",
+    };
+    const persisted: string[] = [];
+    const { jobService } = createContainer(undefined, undefined, media, undefined, undefined, {
+      name: "test",
+      persist: async (_jobId, artifact) => {
+        persisted.push(artifact.uri);
+        return artifact.uri;
+      },
+      materialize: async (uri) => uri,
+      createDownloadUrl: async () => undefined,
+    });
+    const job = await jobService.create("heygen-user", { topic: "Интегрированная озвучка", productImageFileId });
+
+    const ready = await jobService.produce("heygen-user", job.id);
+
+    expect(ready.status).toBe("ready_for_approval");
+    expect(ready.artifacts.some((artifact) => artifact.uri.startsWith("heygen://"))).toBe(false);
+    expect(persisted).toEqual(["avatar.mp4", "final.mp4", "quality.json"]);
   });
 
   it("rejects an invalid transition", () => {

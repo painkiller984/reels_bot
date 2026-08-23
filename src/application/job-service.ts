@@ -42,7 +42,11 @@ export class JobService {
 
     await this.move(job, "audio_generating");
     const audioUri = await this.media.synthesizeSpeech(job);
-    job.artifacts.push({ kind: "audio", uri: audioUri, createdAt: new Date() });
+    // In integrated HeyGen TTS mode this is a control URI, not a file that can
+    // be uploaded to object storage. The audio is embedded in avatar.mp4.
+    if (!audioUri.startsWith("heygen://")) {
+      job.artifacts.push({ kind: "audio", uri: audioUri, createdAt: new Date() });
+    }
 
     await this.move(job, "avatar_generating");
     const avatarUri = await this.media.createAvatar(job, audioUri);
