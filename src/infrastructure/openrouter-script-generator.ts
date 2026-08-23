@@ -7,6 +7,23 @@ export interface OpenRouterScriptOptions {
   apiKey: string;
   model: string;
   telegramFiles?: TelegramFileClient;
+  imageLoadTimeoutMs?: number;
+  requestTimeoutMs?: number;
+  maxAttempts?: number;
+}
+
+async function within<T>(task: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs} ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 const scriptJsonSchema = {
@@ -68,21 +85,36 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
     this.client = new OpenAI({
       apiKey: options.apiKey,
       baseURL: "https://openrouter.ai/api/v1",
-      timeout: 25_000,
+      timeout: options.requestTimeoutMs ?? 12_000,
       maxRetries: 0,
       defaultHeaders: { "X-OpenRouter-Title": "AI Reels Telegram Bot" },
     });
   }
 
   async generate(brief: Brief): Promise<Script> {
-    const productImages = this.options.telegramFiles
-      ? await Promise.all(productImageIds(brief).map((fileId) => this.options.telegramFiles!.dataUrl(fileId)))
-      : [];
+    let productImages: string[] = [];
+    if (this.options.telegramFiles) {
+      try {
+        const imageLoadTimeoutMs = this.options.imageLoadTimeoutMs ?? 10_000;
+        productImages = await within(
+          Promise.all(productImageIds(brief).map((fileId) => this.options.telegramFiles!.dataUrl(fileId, imageLoadTimeoutMs))),
+          imageLoadTimeoutMs,
+          "Telegram product image loading",
+        );
+      } catch (error) {
+        console.warn(JSON.stringify({
+          event: "script_image_context_unavailable",
+          message: error instanceof Error ? error.message.slice(0, 300) : "unknown error",
+        }));
+      }
+    }
     const requestedWords = Math.max(15, Math.round(brief.durationSec * 2.05));
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const maxAttempts = this.options.maxAttempts ?? 2;
+    const requestTimeoutMs = this.options.requestTimeoutMs ?? 12_000;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         const strictStructuredOutput = attempt === 1;
-        const response = await this.client.chat.completions.create({
+        const response = await within(this.client.chat.completions.create({
           model: this.options.model,
           temperature: 0.35,
           ...(strictStructuredOutput ? {
@@ -108,12 +140,12 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
                 : JSON.stringify(brief),
             },
           ],
-        } as never);
+        } as never), requestTimeoutMs, "OpenRouter script generation");
         const text = response.choices[0]?.message.content;
         if (!text) throw new Error("OpenRouter did not return a script");
         return parseScriptResponse(text, brief.durationSec);
       } catch (error) {
-        if (attempt === 3) return createFallbackScript(brief);
+        if (attempt === maxAttempts) return createFallbackScript(brief);
         await new Promise((resolveDelay) => setTimeout(resolveDelay, attempt * 500));
       }
     }
