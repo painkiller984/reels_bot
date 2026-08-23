@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ScriptGenerator } from "../application/ports.js";
-import { ScriptSchema, type Brief, type Script } from "../domain/job.js";
+import { productImageIds, ScriptSchema, type Brief, type Script } from "../domain/job.js";
 import { TelegramFileClient } from "./telegram-file-client.js";
 
 export interface OpenRouterScriptOptions {
@@ -75,9 +75,9 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
   }
 
   async generate(brief: Brief): Promise<Script> {
-    const productImage = this.options.telegramFiles
-      ? await this.options.telegramFiles.dataUrl(brief.productImageFileId)
-      : undefined;
+    const productImages = this.options.telegramFiles
+      ? await Promise.all(productImageIds(brief).map((fileId) => this.options.telegramFiles!.dataUrl(fileId)))
+      : [];
     const requestedWords = Math.max(15, Math.round(brief.durationSec * 2.05));
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
@@ -100,10 +100,10 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
             },
             {
               role: "user",
-              content: productImage
+              content: productImages.length > 0
                 ? [
-                    { type: "text", text: `Проанализируй изображение продукта и создай сценарий по брифу: ${JSON.stringify(brief)}` },
-                    { type: "image_url", image_url: { url: productImage } },
+                    { type: "text", text: `Проанализируй все изображения одного продукта или приложения и создай единый сценарий по брифу: ${JSON.stringify(brief)}` },
+                    ...productImages.map((productImage) => ({ type: "image_url" as const, image_url: { url: productImage } })),
                   ]
                 : JSON.stringify(brief),
             },

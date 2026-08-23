@@ -66,6 +66,10 @@ function avatarKeyboard(): InlineKeyboard {
     .text("Аватар из фото — +$1", "brief:avatar:photo");
 }
 
+function productImagesKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text("Готово — перейти дальше", "brief:product:done");
+}
+
 function draftSummary(draft: BriefDraft): string {
   const avatarCreationCost = draft.avatarMode === "photo" || Boolean(draft.avatarPrompt) ? 1 : 0;
   const estimatedHeygenCost = (draft.durationSec ?? 45) * 0.05 + avatarCreationCost;
@@ -77,7 +81,7 @@ function draftSummary(draft: BriefDraft): string {
     `Тон: ${draft.tone}`,
     `Длительность: ${draft.durationSec} сек`,
     `Платформы: ${draft.platforms?.join(", ")}`,
-    `Фото продукта: ${draft.productImageFileId ? "добавлено" : "обязательно"}`,
+    `Изображения продукта: ${draft.productImageFileIds?.length ?? (draft.productImageFileId ? 1 : 0)}`,
     `Аватар: ${draft.avatarMode === "photo" ? "новый из фотографии" : draft.avatarPrompt ? `новый по описанию: ${draft.avatarPrompt}` : "готовый многоразовый"}`,
     `CTA: ${draft.callToAction ?? "автоматический"}`,
     `Ориентировочная стоимость HeyGen: $${estimatedHeygenCost.toFixed(2)} (по текущему API-тарифу)`,
@@ -93,6 +97,7 @@ function completedBrief(draft: BriefDraft): unknown {
     durationSec: draft.durationSec,
     platforms: draft.platforms,
     productImageFileId: draft.productImageFileId,
+    productImageFileIds: draft.productImageFileIds,
     avatarMode: draft.avatarMode ?? "generated",
     ...(draft.avatarPrompt ? { avatarPrompt: draft.avatarPrompt } : {}),
     ...(draft.avatarImageFileId ? { avatarImageFileId: draft.avatarImageFileId } : {}),
@@ -108,8 +113,17 @@ async function acceptImage(ctx: Context, drafts: DraftStore, fileId: string): Pr
     return;
   }
   if (draft.stage === "product_image") {
-    drafts.update(userId, { productImageFileId: fileId, stage: "avatar_mode" });
-    await ctx.reply("Изображение продукта принято. Шаг 3/9. Как создать ведущего?", { reply_markup: avatarKeyboard() });
+    const existing = draft.productImageFileIds ?? (draft.productImageFileId ? [draft.productImageFileId] : []);
+    if (existing.length >= 6) {
+      await ctx.reply("Уже добавлено максимум 6 изображений. Нажмите «Готово — перейти дальше».", { reply_markup: productImagesKeyboard() });
+      return;
+    }
+    const productImageFileIds = [...existing, fileId];
+    drafts.update(userId, { productImageFileId: productImageFileIds[0]!, productImageFileIds });
+    await ctx.reply(
+      `Изображение ${productImageFileIds.length}/6 принято. Пришлите ещё изображения для смены сцен или нажмите «Готово — перейти дальше».`,
+      { reply_markup: productImagesKeyboard() },
+    );
   } else {
     drafts.update(userId, { avatarImageFileId: fileId, stage: "goal" });
     await ctx.reply("Фото аватара принято. Шаг 4/9. Какая цель ролика?", { reply_markup: goalKeyboard() });
@@ -123,6 +137,7 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
   const help =
     "/create — пошагово создать ролик\n" +
     "/create тема — быстрый старт\n" +
+    "/done — закончить добавление изображений\n" +
     "/status ID — статус задачи\n" +
     "/queue — очередь\n" +
     "/preview ID — получить готовый MP4\n" +
@@ -142,8 +157,27 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     if (!topic) await ctx.reply("Шаг 1/9. Пришлите тему ролика одним сообщением.");
     else {
       drafts.update(userId, { stage: "product_image" });
-      await ctx.reply("Шаг 2/9. Пришлите обязательное изображение продукта, логотип или скриншот приложения.");
+      await ctx.reply("Шаг 2/9. Пришлите от 1 до 6 изображений продукта или экранов приложения. После загрузки нажмите кнопку «Готово».");
     }
+  });
+
+  const completeProductImages = async (ctx: Context): Promise<void> => {
+    const userId = userIdOf(ctx);
+    const draft = drafts.get(userId);
+    if (!draft || draft.stage !== "product_image") return;
+    const imageCount = draft.productImageFileIds?.length ?? (draft.productImageFileId ? 1 : 0);
+    if (imageCount === 0) {
+      await ctx.reply("Нужно минимум одно изображение продукта, логотип или скриншот приложения.");
+      return;
+    }
+    drafts.update(userId, { stage: "avatar_mode" });
+    await ctx.reply(`Принято изображений: ${imageCount}. Шаг 3/9. Как создать ведущего?`, { reply_markup: avatarKeyboard() });
+  };
+
+  bot.command("done", completeProductImages);
+  bot.callbackQuery("brief:product:done", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await completeProductImages(ctx);
   });
 
   bot.callbackQuery(/^brief:goal:(reach|sales|education|engagement)$/, async (ctx) => {
@@ -239,7 +273,7 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     if (draft.stage === "topic") {
       if (ctx.message.text.trim().length < 3) return void await ctx.reply("Тема слишком короткая.");
       drafts.update(userId, { topic: ctx.message.text.trim(), stage: "product_image" });
-      await ctx.reply("Шаг 2/9. Пришлите обязательное изображение продукта, логотип или скриншот приложения.");
+      await ctx.reply("Шаг 2/9. Пришлите от 1 до 6 изображений продукта или экранов приложения. После загрузки нажмите кнопку «Готово».");
     } else if (draft.stage === "audience") {
       drafts.update(userId, { audience: ctx.message.text.trim(), stage: "tone" });
       await ctx.reply("Шаг 6/9. Выберите тон.", { reply_markup: toneKeyboard() });

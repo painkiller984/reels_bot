@@ -13,12 +13,17 @@ export const BriefSchema = z.object({
   platforms: z.array(PlatformSchema).min(1).default(["youtube"]),
   callToAction: z.string().trim().max(500).optional(),
   productImageFileId: z.string().min(1),
+  productImageFileIds: z.array(z.string().min(1)).min(1).max(6).optional(),
   avatarMode: z.enum(["generated", "photo"]).default("generated"),
   avatarPrompt: z.string().trim().min(3).max(1_000).optional(),
   avatarImageFileId: z.string().min(1).optional(),
 });
 
 export type Brief = z.infer<typeof BriefSchema>;
+
+export function productImageIds(brief: Brief): string[] {
+  return [...new Set([brief.productImageFileId, ...(brief.productImageFileIds ?? [])])].slice(0, 6);
+}
 
 export const JobStatusSchema = z.enum([
   "draft",

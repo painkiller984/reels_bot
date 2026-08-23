@@ -12,6 +12,7 @@ export interface BriefDraft {
   platforms?: Platform[];
   callToAction?: string;
   productImageFileId?: string;
+  productImageFileIds?: string[];
   avatarMode?: "generated" | "photo";
   avatarPrompt?: string;
   avatarImageFileId?: string;

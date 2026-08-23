@@ -14,10 +14,12 @@ import { MockScriptGenerator } from "./infrastructure/mock-providers.js";
 import { OpenAiScriptGenerator } from "./infrastructure/openai-script-generator.js";
 import { resolveExecutable } from "./infrastructure/executable-resolver.js";
 import { GoogleCloudTextToSpeech } from "./infrastructure/google-cloud-text-to-speech.js";
+import { GeminiScriptGenerator } from "./infrastructure/gemini-script-generator.js";
 import { YoutubeAuthService } from "./infrastructure/youtube-auth.js";
 import { YoutubePublisher } from "./infrastructure/youtube-publisher.js";
 import { MockSocialPublisher } from "./infrastructure/mock-providers.js";
 import { OpenRouterScriptGenerator } from "./infrastructure/openrouter-script-generator.js";
+import { OpenRouterBrollBackgroundGenerator } from "./infrastructure/openrouter-product-image-generator.js";
 import { OpenRouterTextToSpeech } from "./infrastructure/openrouter-text-to-speech.js";
 import { HeyGenAvatarGenerator } from "./infrastructure/heygen-avatar-generator.js";
 import { TelegramFileClient } from "./infrastructure/telegram-file-client.js";
@@ -76,6 +78,16 @@ if (!config.TELEGRAM_BOT_TOKEN) {
     : undefined;
   const prisma = config.DATABASE_URL ? createPrismaClient(config.DATABASE_URL) : undefined;
   const repository = prisma ? new PrismaJobRepository(prisma) : new FileJobRepository(config.DATA_FILE);
+  if (config.BROLL_PROVIDER === "openrouter" && !config.OPENROUTER_API_KEY) {
+    throw new Error("OPENROUTER_API_KEY is required when BROLL_PROVIDER=openrouter");
+  }
+  const brollBackgroundGenerator = config.BROLL_PROVIDER === "openrouter"
+    ? new OpenRouterBrollBackgroundGenerator({
+        apiKey: config.OPENROUTER_API_KEY!,
+        model: config.OPENROUTER_IMAGE_MODEL,
+        imageCount: config.OPENROUTER_BROLL_COUNT,
+      })
+    : undefined;
   const artifactStore = config.OBJECT_STORAGE === "r2"
     ? new R2ArtifactStore({
         accountId: config.R2_ACCOUNT_ID!,
@@ -96,20 +108,31 @@ if (!config.TELEGRAM_BOT_TOKEN) {
         avatarHandlesSpeech: config.TTS_PROVIDER === "heygen",
         downloadTelegramImage: (fileId, destination) => telegramFiles.download(fileId, destination),
         ...(musicClient ? { downloadBackgroundMusic: (query: string, destination: string) => musicClient.download(query, destination) } : {}),
+        ...(brollBackgroundGenerator ? { brollBackgroundGenerator } : {}),
       })
     : new MockMediaPipeline();
   if (config.SCRIPT_PROVIDER === "openai" && !config.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is required when SCRIPT_PROVIDER=openai");
   }
+  if (config.SCRIPT_PROVIDER === "gemini" && !config.GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is required when SCRIPT_PROVIDER=gemini");
+  }
   const useOpenAi = config.SCRIPT_PROVIDER === "openai"
     || (config.SCRIPT_PROVIDER === "auto" && Boolean(config.OPENAI_API_KEY));
+  const useGemini = config.SCRIPT_PROVIDER === "gemini"
+    || (config.SCRIPT_PROVIDER === "auto" && !useOpenAi && Boolean(config.GEMINI_API_KEY));
   const useOpenRouter = config.SCRIPT_PROVIDER === "openrouter"
-    || (config.SCRIPT_PROVIDER === "auto" && !useOpenAi && Boolean(config.OPENROUTER_API_KEY));
-  const scripts = useOpenRouter
+    || (config.SCRIPT_PROVIDER === "auto" && !useOpenAi && !useGemini && Boolean(config.OPENROUTER_API_KEY));
+  const scripts = useGemini
+    ? new GeminiScriptGenerator({ apiKey: config.GEMINI_API_KEY!, model: config.GEMINI_MODEL, telegramFiles })
+    : useOpenRouter
     ? new OpenRouterScriptGenerator({ apiKey: config.OPENROUTER_API_KEY!, model: config.OPENROUTER_MODEL, telegramFiles })
     : useOpenAi
     ? new OpenAiScriptGenerator({ apiKey: config.OPENAI_API_KEY!, model: config.OPENAI_MODEL })
     : new MockScriptGenerator();
+  const scriptLabel = useGemini
+    ? `Gemini/${config.GEMINI_MODEL}`
+    : useOpenRouter ? `OpenRouter/${config.OPENROUTER_MODEL}` : useOpenAi ? config.OPENAI_MODEL : "mock";
   const youtube = config.YOUTUBE_CLIENT_ID && config.YOUTUBE_CLIENT_SECRET
     ? new YoutubeAuthService({
         clientId: config.YOUTUBE_CLIENT_ID,
@@ -125,7 +148,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
   }, media, scripts, publisher, artifactStore);
   const bot = createBot(config.TELEGRAM_BOT_TOKEN, jobService, queue, {
     storage: `${prisma ? "PostgreSQL" : "file"} + ${artifactStore.name}`,
-    scripts: useOpenRouter ? `OpenRouter/${config.OPENROUTER_MODEL}` : useOpenAi ? config.OPENAI_MODEL : "mock",
+    scripts: scriptLabel,
     media: config.MEDIA_MODE === "local" ? `FFmpeg + ${config.TTS_PROVIDER} TTS` : config.MEDIA_MODE,
     avatar: avatarGenerator ? "heygen" : "placeholder",
     publishing: youtube ? "youtube" : "disabled",
@@ -155,12 +178,13 @@ if (!config.TELEGRAM_BOT_TOKEN) {
     artifactStorage: artifactStore.name,
     media: config.MEDIA_MODE,
     tts: config.TTS_PROVIDER,
-    scripts: useOpenRouter ? config.OPENROUTER_MODEL : useOpenAi ? config.OPENAI_MODEL : "mock",
+    scripts: scriptLabel,
     avatar: avatarGenerator ? "heygen" : "placeholder",
     youtube: Boolean(youtube),
   }, webhookBaseUrl ? "Starting Telegram bot in webhook mode" : "Starting Telegram bot in long-polling mode");
   const commands = [
     { command: "create", description: "Создать новый ролик" },
+    { command: "done", description: "Закончить загрузку изображений" },
     { command: "queue", description: "Показать очередь" },
     { command: "status", description: "Статус задачи" },
     { command: "preview", description: "Получить готовый MP4" },

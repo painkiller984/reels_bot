@@ -72,4 +72,14 @@ describe("content workflow", () => {
     const job = await jobService.create("user-5", { topic: "Отмена задачи", productImageFileId });
     expect((await jobService.cancel("user-5", job.id)).status).toBe("cancelled");
   });
+
+  it("keeps several supplied product images in one brief", async () => {
+    const { jobService } = createContainer();
+    const job = await jobService.create("user-6", {
+      topic: "Три ракурса продукта",
+      productImageFileId,
+      productImageFileIds: [productImageFileId, "second", "third"],
+    });
+    expect(job.brief.productImageFileIds).toEqual([productImageFileId, "second", "third"]);
+  });
 });

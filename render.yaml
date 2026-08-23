@@ -44,6 +44,14 @@ services:
         value: openrouter
       - key: OPENROUTER_MODEL
         value: openrouter/free
+      - key: BROLL_PROVIDER
+        value: none
+      - key: OPENROUTER_IMAGE_MODEL
+        value: google/gemini-3.1-flash-lite-image
+      - key: OPENROUTER_BROLL_COUNT
+        value: 2
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite
       - key: TTS_PROVIDER
         value: heygen
       - key: HEYGEN_RESOLUTION
@@ -55,6 +63,8 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
         sync: false
       - key: HEYGEN_API_KEY
         sync: false
