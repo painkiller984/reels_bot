@@ -1,7 +1,7 @@
 import { BriefSchema, type Brief, type ContentJob, type JobStatus } from "../domain/job.js";
 import { assertTransition } from "../domain/workflow.js";
 import { workflowTransitions } from "../domain/workflow.js";
-import type { JobRepository, MediaPipeline, ScriptGenerator, SocialPublisher } from "./ports.js";
+import type { ArtifactStore, JobRepository, MediaPipeline, ScriptGenerator, SocialPublisher } from "./ports.js";
 
 export class JobNotFoundError extends Error {}
 export class JobAccessError extends Error {}
@@ -12,6 +12,7 @@ export class JobService {
     private readonly scripts: ScriptGenerator,
     private readonly media: MediaPipeline,
     private readonly publisher: SocialPublisher,
+    private readonly artifactStore: ArtifactStore,
   ) {}
 
   async create(userId: string, input: unknown): Promise<ContentJob> {
@@ -53,6 +54,10 @@ export class JobService {
     await this.move(job, "quality_check");
     const reportUri = await this.media.validate(job, renderUri);
     job.artifacts.push({ kind: "quality_report", uri: reportUri, createdAt: new Date() });
+    for (const artifact of job.artifacts) {
+      artifact.uri = await this.artifactStore.persist(job.id, artifact);
+    }
+    await this.jobs.save(job);
     await this.move(job, "ready_for_approval");
     return job;
   }

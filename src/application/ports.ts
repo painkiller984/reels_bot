@@ -1,4 +1,4 @@
-import type { Brief, ContentJob, JobStatus, Platform, Script } from "../domain/job.js";
+import type { Artifact, Brief, ContentJob, JobStatus, Platform, Script } from "../domain/job.js";
 
 export interface JobRepository {
   nextId(): Promise<string>;
@@ -21,4 +21,11 @@ export interface MediaPipeline {
 
 export interface SocialPublisher {
   publish(job: ContentJob, platform: Platform): Promise<string>;
+}
+
+export interface ArtifactStore {
+  readonly name: string;
+  persist(jobId: string, artifact: Artifact): Promise<string>;
+  materialize(uri: string): Promise<string>;
+  createDownloadUrl(uri: string): Promise<string | undefined>;
 }

@@ -18,6 +18,12 @@ const ConfigSchema = z.object({
   DATABASE_URL: optionalPostgresUrl,
   DATA_FILE: z.string().min(1).default(".data/jobs.json"),
   ARTIFACTS_DIR: z.string().min(1).default("artifacts"),
+  OBJECT_STORAGE: z.enum(["local", "r2"]).default("local"),
+  R2_ACCOUNT_ID: optionalString,
+  R2_ACCESS_KEY_ID: optionalString,
+  R2_SECRET_ACCESS_KEY: optionalString,
+  R2_BUCKET: z.string().min(3).default("reels-bot-anton-media"),
+  R2_SIGNED_URL_TTL_SEC: z.coerce.number().int().min(60).max(604_800).default(3_600),
   MEDIA_MODE: z.enum(["local", "mock"]).default("local"),
   FFMPEG_PATH: z.string().min(1).default("ffmpeg"),
   FFPROBE_PATH: z.string().min(1).default("ffprobe"),
@@ -47,5 +53,9 @@ const ConfigSchema = z.object({
 export type AppConfig = z.infer<typeof ConfigSchema>;
 
 export function readConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
-  return ConfigSchema.parse(environment);
+  const config = ConfigSchema.parse(environment);
+  if (config.OBJECT_STORAGE === "r2" && (!config.R2_ACCOUNT_ID || !config.R2_ACCESS_KEY_ID || !config.R2_SECRET_ACCESS_KEY)) {
+    throw new Error("R2_ACCOUNT_ID, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY are required when OBJECT_STORAGE=r2");
+  }
+  return config;
 }

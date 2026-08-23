@@ -1,14 +1,14 @@
-import { access } from "node:fs/promises";
 import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
 import { z } from "zod";
 import type { JobQueue } from "../application/job-queue.js";
 import type { JobService } from "../application/job-service.js";
+import type { ArtifactStore } from "../application/ports.js";
 import type { Brief, Platform } from "../domain/job.js";
 import { DraftStore, type BriefDraft } from "./draft-store.js";
 import { formatJob, formatQueue, statusLabels } from "./formatters.js";
 
 export interface BotCapabilities {
-  storage: "postgresql" | "file";
+  storage: string;
   scripts: string;
   media: string;
   avatar: "heygen" | "placeholder";
@@ -113,7 +113,7 @@ async function acceptImage(ctx: Context, drafts: DraftStore, fileId: string): Pr
   }
 }
 
-export function createBot(token: string, jobs: JobService, queue: JobQueue, capabilities: BotCapabilities, youtube?: YoutubeConnection): Bot {
+export function createBot(token: string, jobs: JobService, queue: JobQueue, capabilities: BotCapabilities, artifactStore: ArtifactStore, youtube?: YoutubeConnection): Bot {
   const bot = new Bot(token);
   const drafts = new DraftStore();
 
@@ -258,7 +258,10 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
   bot.command("status", async (ctx) => {
     const id = argumentOf(ctx.message?.text);
     if (!id) return void await ctx.reply("Укажите ID: /status abc123");
-    await ctx.reply(formatJob(await jobs.get(userIdOf(ctx), id)));
+    const job = await jobs.get(userIdOf(ctx), id);
+    const render = job.artifacts.find((artifact) => artifact.kind === "render");
+    const downloadUrl = render ? await artifactStore.createDownloadUrl(render.uri) : undefined;
+    await ctx.reply(formatJob(job) + (downloadUrl ? `\n\nСкачать ролик (ссылка на 1 час):\n${downloadUrl}` : ""), { link_preview_options: { is_disabled: true } });
   });
 
   bot.command("queue", async (ctx) => ctx.reply(formatQueue(await jobs.list(userIdOf(ctx)))));
@@ -275,8 +278,8 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     const job = await jobs.get(userIdOf(ctx), id);
     const render = job.artifacts.find((artifact) => artifact.kind === "render");
     if (!render || render.uri.startsWith("mock://")) return void await ctx.reply("Файл предпросмотра ещё не готов.");
-    await access(render.uri);
-    await ctx.replyWithVideo(new InputFile(render.uri), { caption: `Ролик #${job.id}` });
+    const file = await artifactStore.materialize(render.uri);
+    await ctx.replyWithVideo(new InputFile(file), { caption: `Ролик #${job.id}` });
   });
 
   bot.command("publish", async (ctx) => {
@@ -332,7 +335,8 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     if (kind === "produce") {
       const render = job.artifacts.find((artifact) => artifact.kind === "render");
       if (render && !render.uri.startsWith("mock://")) {
-        await bot.api.sendVideo(userId, new InputFile(render.uri), { caption: `Ролик #${job.id} готов. После проверки можно использовать /publish ${job.id}` });
+        const file = await artifactStore.materialize(render.uri);
+        await bot.api.sendVideo(userId, new InputFile(file), { caption: `Ролик #${job.id} готов. После проверки можно использовать /publish ${job.id}` });
       } else {
         await bot.api.sendMessage(userId, `Ролик #${job.id} готов. Проверка: /status ${job.id}`);
       }

@@ -25,6 +25,7 @@ import { HealthServer } from "./infrastructure/health-server.js";
 import { HeyGenMusicClient } from "./infrastructure/heygen-music-client.js";
 import { FileYoutubeTokenStore, PrismaYoutubeTokenStore } from "./infrastructure/youtube-token-store.js";
 import { deployPrismaMigrations } from "./infrastructure/prisma-migrator.js";
+import { LocalArtifactStore, R2ArtifactStore } from "./infrastructure/artifact-store.js";
 
 const config = readConfig();
 const logger = pino({ level: config.LOG_LEVEL });
@@ -74,6 +75,16 @@ if (!config.TELEGRAM_BOT_TOKEN) {
     : undefined;
   const prisma = config.DATABASE_URL ? createPrismaClient(config.DATABASE_URL) : undefined;
   const repository = prisma ? new PrismaJobRepository(prisma) : new FileJobRepository(config.DATA_FILE);
+  const artifactStore = config.OBJECT_STORAGE === "r2"
+    ? new R2ArtifactStore({
+        accountId: config.R2_ACCOUNT_ID!,
+        accessKeyId: config.R2_ACCESS_KEY_ID!,
+        secretAccessKey: config.R2_SECRET_ACCESS_KEY!,
+        bucket: config.R2_BUCKET,
+        cacheDir: `${config.ARTIFACTS_DIR}/.r2-cache`,
+        signedUrlTtlSec: config.R2_SIGNED_URL_TTL_SEC,
+      })
+    : new LocalArtifactStore();
   const media = config.MEDIA_MODE === "local"
     ? new LocalMediaPipeline({
         artifactsDir: config.ARTIFACTS_DIR,
@@ -107,17 +118,17 @@ if (!config.TELEGRAM_BOT_TOKEN) {
       })
     : undefined;
   await youtube?.start();
-  const publisher = youtube ? new YoutubePublisher(youtube, config.YOUTUBE_PRIVACY_STATUS) : new MockSocialPublisher();
+  const publisher = youtube ? new YoutubePublisher(youtube, config.YOUTUBE_PRIVACY_STATUS, artifactStore) : new MockSocialPublisher();
   const { jobService, queue, recovery } = createContainer(repository, (kind, jobId, error) => {
     logger.error({ kind, jobId, error }, "Background task failed");
-  }, media, scripts, publisher);
+  }, media, scripts, publisher, artifactStore);
   const bot = createBot(config.TELEGRAM_BOT_TOKEN, jobService, queue, {
-    storage: prisma ? "postgresql" : "file",
+    storage: `${prisma ? "PostgreSQL" : "file"} + ${artifactStore.name}`,
     scripts: useOpenRouter ? `OpenRouter/${config.OPENROUTER_MODEL}` : useOpenAi ? config.OPENAI_MODEL : "mock",
     media: config.MEDIA_MODE === "local" ? `FFmpeg + ${config.TTS_PROVIDER} TTS` : config.MEDIA_MODE,
     avatar: avatarGenerator ? "heygen" : "placeholder",
     publishing: youtube ? "youtube" : "disabled",
-  }, youtube);
+  }, artifactStore, youtube);
   const webhookBaseUrl = config.TELEGRAM_WEBHOOK_URL ?? process.env.RENDER_EXTERNAL_URL;
   const webhookSecret = createHash("sha256").update(config.TELEGRAM_BOT_TOKEN).digest("hex");
   const telegramWebhook = webhookBaseUrl
@@ -140,6 +151,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
 
   logger.info({
     storage: prisma ? "postgresql" : "file",
+    artifactStorage: artifactStore.name,
     media: config.MEDIA_MODE,
     tts: config.TTS_PROVIDER,
     scripts: useOpenRouter ? config.OPENROUTER_MODEL : useOpenAi ? config.OPENAI_MODEL : "mock",
