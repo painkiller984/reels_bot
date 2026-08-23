@@ -23,7 +23,7 @@ services:
       - key: ARTIFACTS_DIR
         value: /app/artifacts
       - key: OBJECT_STORAGE
-        value: local
+        value: r2
       - key: R2_ACCOUNT_ID
         sync: false
       - key: R2_ACCESS_KEY_ID
