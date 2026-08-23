@@ -15,7 +15,7 @@ export class YoutubePublisher implements SocialPublisher {
     const result = await youtube.videos.insert({
       part: ["snippet", "status"],
       requestBody: {
-        snippet: { title: job.brief.topic.slice(0, 100), description: [job.script?.hook, job.script?.body, job.script?.callToAction].filter(Boolean).join("\n\n") },
+        snippet: { title: job.brief.topic.slice(0, 100), description: [job.script?.hook, job.script?.body, job.script?.callToAction, "#Shorts"].filter(Boolean).join("\n\n") },
         status: { privacyStatus: this.privacyStatus, selfDeclaredMadeForKids: false },
       },
       media: { body: createReadStream(video) },

@@ -23,6 +23,7 @@ import { HeyGenAvatarGenerator } from "./infrastructure/heygen-avatar-generator.
 import { TelegramFileClient } from "./infrastructure/telegram-file-client.js";
 import { HealthServer } from "./infrastructure/health-server.js";
 import { HeyGenMusicClient } from "./infrastructure/heygen-music-client.js";
+import { FileYoutubeTokenStore, PrismaYoutubeTokenStore } from "./infrastructure/youtube-token-store.js";
 
 const config = readConfig();
 const logger = pino({ level: config.LOG_LEVEL });
@@ -97,8 +98,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
         clientId: config.YOUTUBE_CLIENT_ID,
         clientSecret: config.YOUTUBE_CLIENT_SECRET,
         redirectUri: config.YOUTUBE_OAUTH_REDIRECT_URI,
-        tokenFile: config.YOUTUBE_TOKEN_FILE,
-        port: config.YOUTUBE_OAUTH_PORT,
+        tokenStore: prisma ? new PrismaYoutubeTokenStore(prisma) : new FileYoutubeTokenStore(config.YOUTUBE_TOKEN_FILE),
       })
     : undefined;
   await youtube?.start();
@@ -118,7 +118,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
   const telegramWebhook = webhookBaseUrl
     ? webhookCallback(bot, "http", { secretToken: webhookSecret, onTimeout: "return", timeoutMilliseconds: 55_000 })
     : undefined;
-  const healthServer = new HealthServer(config.PORT, telegramWebhook);
+  const healthServer = new HealthServer(config.PORT, telegramWebhook, youtube ? (request, response) => void youtube.handleCallback(request, response) : undefined);
   await healthServer.start();
   const recoveryResult = await recovery.recover();
   logger.info(recoveryResult, "Interrupted jobs recovery completed");

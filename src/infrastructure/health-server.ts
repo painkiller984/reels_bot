@@ -6,6 +6,7 @@ export class HealthServer {
   constructor(
     private readonly port: number,
     private readonly telegramWebhook?: RequestListener,
+    private readonly youtubeCallback?: RequestListener,
   ) {}
 
   async start(): Promise<void> {
@@ -16,6 +17,8 @@ export class HealthServer {
         response.end(JSON.stringify({ status: "ok", service: "reels-bot" }));
       } else if (request.url === "/telegram" && request.method === "POST" && this.telegramWebhook) {
         this.telegramWebhook(request, response);
+      } else if (request.url?.startsWith("/oauth/youtube/callback") && request.method === "GET" && this.youtubeCallback) {
+        this.youtubeCallback(request, response);
       } else {
         response.writeHead(404).end();
       }

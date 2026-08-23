@@ -1,39 +1,21 @@
-import { createServer, type Server } from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { google, type Auth } from "googleapis";
-
-type StoredTokens = Record<string, Auth.Credentials>;
+import type { YoutubeTokenStore } from "./youtube-token-store.js";
 
 export interface YoutubeAuthOptions {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
-  tokenFile: string;
-  port: number;
+  tokenStore: YoutubeTokenStore;
 }
 
 export class YoutubeAuthService {
   private readonly pending = new Map<string, { userId: string; expiresAt: number }>();
-  private server: Server | undefined;
-
   constructor(private readonly options: YoutubeAuthOptions) {}
 
-  async start(): Promise<void> {
-    if (this.server) return;
-    this.server = createServer((request, response) => void this.handleCallback(request.url, response));
-    await new Promise<void>((resolve, reject) => {
-      this.server!.once("error", reject);
-      this.server!.listen(this.options.port, "127.0.0.1", resolve);
-    });
-  }
-
-  async stop(): Promise<void> {
-    if (!this.server) return;
-    await new Promise<void>((resolve, reject) => this.server!.close((error) => error ? reject(error) : resolve()));
-    this.server = undefined;
-  }
+  async start(): Promise<void> {}
+  async stop(): Promise<void> {}
 
   createAuthorizationUrl(userId: string): string {
     const state = randomUUID();
@@ -47,28 +29,26 @@ export class YoutubeAuthService {
   }
 
   async getAuthorizedClient(userId: string): Promise<Auth.OAuth2Client> {
-    const tokens = (await this.readTokens())[userId];
+    const tokens = await this.options.tokenStore.get(userId);
     if (!tokens?.refresh_token) throw new Error("YouTube не подключён. Выполните /connect_youtube в боте.");
     const client = this.client();
     client.setCredentials(tokens);
     client.on("tokens", async (updated: Auth.Credentials) => {
-      const all = await this.readTokens();
-      all[userId] = { ...all[userId], ...updated };
-      await this.writeTokens(all);
+      await this.options.tokenStore.set(userId, updated);
     });
     return client;
   }
 
   async isConnected(userId: string): Promise<boolean> {
-    return Boolean((await this.readTokens())[userId]?.refresh_token);
+    return Boolean((await this.options.tokenStore.get(userId))?.refresh_token);
   }
 
   private client(): Auth.OAuth2Client {
     return new google.auth.OAuth2(this.options.clientId, this.options.clientSecret, this.options.redirectUri);
   }
 
-  private async handleCallback(requestUrl: string | undefined, response: import("node:http").ServerResponse): Promise<void> {
-    const url = new URL(requestUrl ?? "/", `http://127.0.0.1:${this.options.port}`);
+  async handleCallback(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const url = new URL(request.url ?? "/", this.options.redirectUri);
     if (url.pathname !== "/oauth/youtube/callback") { response.writeHead(404).end("Not found"); return; }
     const state = url.searchParams.get("state");
     const code = url.searchParams.get("code");
@@ -79,9 +59,7 @@ export class YoutubeAuthService {
     }
     try {
       const { tokens } = await this.client().getToken(code);
-      const all = await this.readTokens();
-      all[pending.userId] = { ...all[pending.userId], ...tokens };
-      await this.writeTokens(all);
+      await this.options.tokenStore.set(pending.userId, tokens);
       this.pending.delete(state!);
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end("<h2>YouTube успешно подключён.</h2><p>Вернитесь в Telegram и создайте ролик.</p>");
     } catch {
@@ -89,11 +67,4 @@ export class YoutubeAuthService {
     }
   }
 
-  private async readTokens(): Promise<StoredTokens> {
-    try { return JSON.parse(await readFile(this.options.tokenFile, "utf8")) as StoredTokens; } catch { return {}; }
-  }
-  private async writeTokens(tokens: StoredTokens): Promise<void> {
-    await mkdir(dirname(this.options.tokenFile), { recursive: true });
-    await writeFile(this.options.tokenFile, JSON.stringify(tokens, null, 2), { encoding: "utf8", mode: 0o600 });
-  }
 }

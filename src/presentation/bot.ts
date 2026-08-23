@@ -266,7 +266,7 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
   bot.command("connect_youtube", async (ctx) => {
     if (!youtube) return void await ctx.reply("YouTube OAuth ещё не настроен владельцем бота.");
     const url = youtube.createAuthorizationUrl(userIdOf(ctx));
-    await ctx.reply("Откройте ссылку на том же компьютере, где запущен бот, войдите в нужный YouTube-канал и подтвердите доступ.\n\n" + url, { link_preview_options: { is_disabled: true } });
+    await ctx.reply("Откройте ссылку, войдите в нужный YouTube-канал и подтвердите доступ. После сообщения об успешной авторизации вернитесь в бот.\n\n" + url, { link_preview_options: { is_disabled: true } });
   });
 
   bot.command("preview", async (ctx) => {
