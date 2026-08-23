@@ -137,7 +137,7 @@ export class LocalMediaPipeline implements MediaPipeline {
       await this.options.downloadTelegramImage(job.brief.productImageFileId, productImage);
       const musicInput = hasMusic ? ["-stream_loop", "-1", "-i", musicFile] : [];
       const musicFilter = hasMusic
-        ? `;[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[voice];[2:a]volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, targetDuration - 1)}:d=1,atrim=duration=${targetDuration}[music];[voice][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,apad=whole_dur=${targetDuration}[outa]`
+        ? `;[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[voice];[2:a]aresample=48000,volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, targetDuration - 1)}:d=1,atrim=duration=${targetDuration}[music];[voice][music]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0,atrim=duration=${targetDuration},apad=whole_dur=${targetDuration}[outa]`
         : `;[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=${targetDuration}[outa]`;
       const productFadeOut = Math.max(1, targetDuration - 0.6);
       await this.ffmpeg([
@@ -150,7 +150,7 @@ export class LocalMediaPipeline implements MediaPipeline {
     if (hasMusic) {
       await this.ffmpeg([
         "-y", "-i", avatarUri, "-stream_loop", "-1", "-i", musicFile,
-        "-filter_complex", `[0:v]subtitles='${subtitlePath}':force_style='${subtitleStyle}'[outv];[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[voice];[1:a]volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, targetDuration - 1)}:d=1,atrim=duration=${targetDuration}[music];[voice][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,apad=whole_dur=${targetDuration}[outa]`,
+        "-filter_complex", `[0:v]subtitles='${subtitlePath}':force_style='${subtitleStyle}'[outv];[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[voice];[1:a]aresample=48000,volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, targetDuration - 1)}:d=1,atrim=duration=${targetDuration}[music];[voice][music]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0,atrim=duration=${targetDuration},apad=whole_dur=${targetDuration}[outa]`,
         "-map", "[outv]", "-map", "[outa]", "-t", String(targetDuration), "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-c:a", "aac", "-shortest", "-movflags", "+faststart", output,
       ]);
       return output;
@@ -184,6 +184,17 @@ export class LocalMediaPipeline implements MediaPipeline {
       "-v", "info", "-i", renderUri, "-af", "volumedetect", "-vn", "-f", "null", "-",
     ], { windowsHide: true, maxBuffer: 20 * 1024 * 1024 });
     const meanVolume = Number(volumeOutput.match(/mean_volume:\s*(-?[\d.]+) dB/u)?.[1] ?? Number.NaN);
+    const { stderr: silenceOutput } = await execFileAsync(this.options.ffmpegPath, [
+      "-v", "info", "-i", renderUri, "-af", "silencedetect=noise=-35dB:d=0.8", "-vn", "-f", "null", "-",
+    ], { windowsHide: true, maxBuffer: 20 * 1024 * 1024 });
+    const silenceStarts = [...silenceOutput.matchAll(/silence_start:\s*([\d.]+)/gu)].map((match) => Number(match[1]));
+    const silenceEnds = [...silenceOutput.matchAll(/silence_end:\s*([\d.]+)/gu)].map((match) => Number(match[1]));
+    const lastSilenceStart = silenceStarts.at(-1);
+    const lastSilenceEnd = silenceEnds.at(-1);
+    const trailingSilence = lastSilenceStart !== undefined
+      && (lastSilenceEnd === undefined || lastSilenceEnd >= duration - 0.25)
+      ? Math.max(0, (lastSilenceEnd ?? duration) - lastSilenceStart)
+      : 0;
     const frameRate = this.frameRate(video?.r_frame_rate);
     const checks = {
       hasVideo: Boolean(video),
@@ -198,6 +209,7 @@ export class LocalMediaPipeline implements MediaPipeline {
         && cues.every((cue) => cue.text.split("\n").length <= 2),
       subtitleTimingValid: cues.every((cue) => cue.start >= 0 && cue.end > cue.start && cue.end <= duration + 1),
       audioLevelReasonable: Number.isFinite(meanVolume) && meanVolume >= -30 && meanVolume <= -8,
+      trailingSilenceReasonable: trailingSilence <= 1.2,
       blackFramesReasonable: blackDuration <= Math.max(1, duration * 0.1),
     };
     const passed = Object.values(checks).every(Boolean);
@@ -215,6 +227,7 @@ export class LocalMediaPipeline implements MediaPipeline {
         subtitleCueCount: cues.length,
         longestSubtitleLine: Math.max(0, ...subtitleLines.map((line) => line.length)),
         meanVolumeDb: meanVolume,
+        trailingSilenceSec: trailingSilence,
         blackDurationSec: blackDuration,
       },
     };
