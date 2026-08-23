@@ -57,12 +57,16 @@ export class YoutubeAuthService {
       response.writeHead(400, { "content-type": "text/html; charset=utf-8" }).end("<h2>Авторизация не выполнена. Вернитесь в Telegram и запустите /connect_youtube заново.</h2>");
       return;
     }
+    let stage: "token_exchange" | "token_storage" = "token_exchange";
     try {
       const { tokens } = await this.client().getToken(code);
+      stage = "token_storage";
       await this.options.tokenStore.set(pending.userId, tokens);
       this.pending.delete(state!);
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end("<h2>YouTube успешно подключён.</h2><p>Вернитесь в Telegram и создайте ролик.</p>");
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(JSON.stringify({ event: "youtube_oauth_callback_failed", stage, message }));
       response.writeHead(500, { "content-type": "text/html; charset=utf-8" }).end("<h2>Не удалось завершить авторизацию.</h2>");
     }
   }
