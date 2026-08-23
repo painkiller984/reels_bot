@@ -130,7 +130,7 @@ export function normalizeMontagePlan(brief: Brief, script: Script): Script {
     productIndex: Math.min(productCount - 1, Math.max(0, scene.productIndex ?? 0)),
   }));
   if (!scenes.some((scene) => scene.kind !== "avatar")) {
-    scenes = [fallback.scenes[0]!, ...scenes.slice(1)];
+    scenes = [{ ...fallback.scenes[0]!, productIndex: 0 }, ...scenes.slice(1)];
   }
   const requestedVisuals = [...new Map(script.montagePlan.generatedVisuals.map((visual) => [visual.id, visual])).values()].slice(0, 2);
   const usedIds = new Set(scenes
