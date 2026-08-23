@@ -13,7 +13,7 @@ services:
       - key: APP_ENV
         value: production
       - key: AUTO_RECOVER_PRODUCTION
-        value: false
+        value: true
       - key: LOG_LEVEL
         value: info
       - key: PORT

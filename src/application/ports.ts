@@ -20,7 +20,17 @@ export interface MediaPipeline {
 }
 
 export interface SocialPublisher {
-  publish(job: ContentJob, platform: Platform): Promise<string>;
+  publish(job: ContentJob, platform: Platform): Promise<{
+    url: string;
+    externalId: string;
+    metrics?: { views: number; likes: number; comments: number; capturedAt: Date };
+  }>;
+  getMetrics(userId: string, platform: Platform, externalId: string): Promise<{
+    views: number;
+    likes: number;
+    comments: number;
+    capturedAt: Date;
+  } | undefined>;
 }
 
 export interface ArtifactStore {

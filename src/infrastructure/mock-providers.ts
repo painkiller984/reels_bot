@@ -31,7 +31,11 @@ export class MockMediaPipeline implements MediaPipeline {
 }
 
 export class MockSocialPublisher implements SocialPublisher {
-  async publish(job: ContentJob, platform: Platform): Promise<string> {
-    return `https://example.com/${platform}/mock-${job.id}`;
+  async publish(job: ContentJob, platform: Platform) {
+    return { url: `https://example.com/${platform}/mock-${job.id}`, externalId: `mock-${job.id}`, metrics: { views: 0, likes: 0, comments: 0, capturedAt: new Date() } };
+  }
+
+  async getMetrics() {
+    return { views: 0, likes: 0, comments: 0, capturedAt: new Date() };
   }
 }

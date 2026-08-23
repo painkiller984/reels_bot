@@ -166,4 +166,29 @@ describe("OpenRouter script safety", () => {
 
     expect(script.hook).toContain("Быстрый резервный сценарий");
   });
+
+  it("stops production instead of silently substituting a template in production", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    const generator = new OpenRouterScriptGenerator({
+      apiKey: "test",
+      model: "test",
+      requestTimeoutMs: 20,
+      maxAttempts: 1,
+      allowFallback: false,
+    });
+
+    await expect(generator.generate({
+      topic: "Продакшен без шаблонной подмены",
+      goal: "reach",
+      audience: "пользователи",
+      tone: "живой",
+      language: "ru",
+      durationSec: 15,
+      platforms: ["youtube"],
+      productImageFileId: "image",
+      avatarMode: "generated",
+    })).rejects.toThrow(/Не удалось создать корректный сценарий/u);
+  });
 });

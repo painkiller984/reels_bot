@@ -106,6 +106,13 @@ export const PublicationSchema = z.object({
   platform: PlatformSchema,
   status: z.enum(["pending", "published", "failed"]),
   url: z.string().url().optional(),
+  externalId: z.string().min(1).optional(),
+  metrics: z.object({
+    views: z.number().int().nonnegative(),
+    likes: z.number().int().nonnegative(),
+    comments: z.number().int().nonnegative(),
+    capturedAt: z.coerce.date(),
+  }).optional(),
   error: z.string().optional(),
 });
 export type Publication = z.infer<typeof PublicationSchema>;

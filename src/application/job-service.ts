@@ -1,4 +1,4 @@
-import { BriefSchema, type Brief, type ContentJob, type JobStatus } from "../domain/job.js";
+import { BriefSchema, type Artifact, type Brief, type ContentJob, type JobStatus } from "../domain/job.js";
 import { assertTransition } from "../domain/workflow.js";
 import { workflowTransitions } from "../domain/workflow.js";
 import type { ArtifactStore, JobRepository, MediaPipeline, ScriptGenerator, SocialPublisher } from "./ports.js";
@@ -37,30 +37,39 @@ export class JobService {
   async produce(userId: string, id: string): Promise<ContentJob> {
     const job = await this.ownedJob(userId, id);
     await this.move(job, "script_generating");
-    job.script = await this.scripts.generate(job.brief);
+    if (!job.script) job.script = await this.scripts.generate(job.brief);
     await this.move(job, "script_review");
 
     await this.move(job, "audio_generating");
-    const audioUri = await this.media.synthesizeSpeech(job);
+    const storedAudio = this.artifact(job, "audio");
+    const audioUri = storedAudio
+      ? await this.artifactStore.materialize(storedAudio.uri)
+      : await this.media.synthesizeSpeech(job);
     // In integrated HeyGen TTS mode this is a control URI, not a file that can
     // be uploaded to object storage. The audio is embedded in avatar.mp4.
     if (!audioUri.startsWith("heygen://")) {
-      job.artifacts.push({ kind: "audio", uri: audioUri, createdAt: new Date() });
+      if (!storedAudio) await this.persistArtifact(job, { kind: "audio", uri: audioUri, createdAt: new Date() });
     }
 
     await this.move(job, "avatar_generating");
-    const avatarUri = await this.media.createAvatar(job, audioUri);
-    job.artifacts.push({ kind: "avatar_video", uri: avatarUri, createdAt: new Date() });
+    const storedAvatar = this.artifact(job, "avatar_video");
+    const avatarUri = storedAvatar
+      ? await this.artifactStore.materialize(storedAvatar.uri)
+      : await this.media.createAvatar(job, audioUri);
+    if (!storedAvatar) await this.persistArtifact(job, { kind: "avatar_video", uri: avatarUri, createdAt: new Date() });
 
     await this.move(job, "rendering");
-    const renderUri = await this.media.render(job, avatarUri);
-    job.artifacts.push({ kind: "render", uri: renderUri, createdAt: new Date() });
+    const storedRender = this.artifact(job, "render");
+    const renderUri = storedRender
+      ? await this.artifactStore.materialize(storedRender.uri)
+      : await this.media.render(job, avatarUri);
+    if (!storedRender) await this.persistArtifact(job, { kind: "render", uri: renderUri, createdAt: new Date() });
 
     await this.move(job, "quality_check");
-    const reportUri = await this.media.validate(job, renderUri);
-    job.artifacts.push({ kind: "quality_report", uri: reportUri, createdAt: new Date() });
-    for (const artifact of job.artifacts) {
-      artifact.uri = await this.artifactStore.persist(job.id, artifact);
+    const storedReport = this.artifact(job, "quality_report");
+    if (!storedReport) {
+      const reportUri = await this.media.validate(job, renderUri);
+      await this.persistArtifact(job, { kind: "quality_report", uri: reportUri, createdAt: new Date() });
     }
     delete job.error;
     await this.jobs.save(job);
@@ -75,7 +84,10 @@ export class JobService {
     let successCount = 0;
     for (const publication of job.publications) {
       try {
-        publication.url = await this.publisher.publish(job, publication.platform);
+        const result = await this.publisher.publish(job, publication.platform);
+        publication.url = result.url;
+        publication.externalId = result.externalId;
+        if (result.metrics) publication.metrics = result.metrics;
         publication.status = "published";
         successCount += 1;
       } catch (error) {
@@ -96,7 +108,22 @@ export class JobService {
   }
 
   async get(userId: string, id: string): Promise<ContentJob> {
-    return this.ownedJob(userId, id);
+    const job = await this.ownedJob(userId, id);
+    let changed = false;
+    for (const publication of job.publications) {
+      if (publication.status !== "published" || !publication.externalId) continue;
+      try {
+        const metrics = await this.publisher.getMetrics(job.userId, publication.platform, publication.externalId);
+        if (metrics) {
+          publication.metrics = metrics;
+          changed = true;
+        }
+      } catch {
+        // Publication remains valid even if the analytics endpoint is temporarily unavailable.
+      }
+    }
+    if (changed) await this.jobs.save(job);
+    return job;
   }
 
   async list(userId: string): Promise<ContentJob[]> {
@@ -126,8 +153,6 @@ export class JobService {
       await this.move(job, "brief_ready");
     }
     job.error = `${automaticRecoveryMarker} Производство один раз автоматически восстановлено после перезапуска`;
-    delete job.script;
-    job.artifacts = [];
     job.updatedAt = new Date();
     await this.jobs.save(job);
     return job;
@@ -163,6 +188,17 @@ export class JobService {
     if (!job) throw new JobNotFoundError(`Задача ${id} не найдена`);
     if (job.userId !== userId) throw new JobAccessError(`Нет доступа к задаче ${id}`);
     return job;
+  }
+
+  private artifact(job: ContentJob, kind: Artifact["kind"]): Artifact | undefined {
+    return job.artifacts.find((artifact) => artifact.kind === kind);
+  }
+
+  private async persistArtifact(job: ContentJob, artifact: Artifact): Promise<void> {
+    const persisted = { ...artifact, uri: await this.artifactStore.persist(job.id, artifact) };
+    job.artifacts = [...job.artifacts.filter((item) => item.kind !== artifact.kind), persisted];
+    job.updatedAt = new Date();
+    await this.jobs.save(job);
   }
 
   private async move(job: ContentJob, status: JobStatus): Promise<void> {

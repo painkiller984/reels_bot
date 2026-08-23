@@ -130,10 +130,21 @@ if (!config.TELEGRAM_BOT_TOKEN) {
     || (config.SCRIPT_PROVIDER === "auto" && !useOpenAi && Boolean(config.GEMINI_API_KEY));
   const useOpenRouter = config.SCRIPT_PROVIDER === "openrouter"
     || (config.SCRIPT_PROVIDER === "auto" && !useOpenAi && !useGemini && Boolean(config.OPENROUTER_API_KEY));
+  if (config.APP_ENV === "production") {
+    const missing = [
+      !config.DATABASE_URL && "DATABASE_URL",
+      config.OBJECT_STORAGE !== "r2" && "OBJECT_STORAGE=r2",
+      config.MEDIA_MODE !== "local" && "MEDIA_MODE=local",
+      !(useOpenAi || useGemini || useOpenRouter) && "реальный LLM provider",
+      !avatarGenerator && "HEYGEN_API_KEY",
+      !(config.YOUTUBE_CLIENT_ID && config.YOUTUBE_CLIENT_SECRET) && "YouTube OAuth",
+    ].filter(Boolean);
+    if (missing.length > 0) throw new Error(`Production configuration incomplete: ${missing.join(", ")}`);
+  }
   const scripts = useGemini
-    ? new GeminiScriptGenerator({ apiKey: config.GEMINI_API_KEY!, model: config.GEMINI_MODEL, telegramFiles })
+    ? new GeminiScriptGenerator({ apiKey: config.GEMINI_API_KEY!, model: config.GEMINI_MODEL, telegramFiles, allowFallback: config.APP_ENV !== "production" })
     : useOpenRouter
-    ? new OpenRouterScriptGenerator({ apiKey: config.OPENROUTER_API_KEY!, model: config.OPENROUTER_MODEL, telegramFiles })
+    ? new OpenRouterScriptGenerator({ apiKey: config.OPENROUTER_API_KEY!, model: config.OPENROUTER_MODEL, telegramFiles, allowFallback: config.APP_ENV !== "production" })
     : useOpenAi
     ? new OpenAiScriptGenerator({ apiKey: config.OPENAI_API_KEY!, model: config.OPENAI_MODEL })
     : new MockScriptGenerator();

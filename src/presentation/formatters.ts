@@ -32,10 +32,14 @@ export function formatJob(job: ContentJob): string {
       lines.push(`AI-фоны: ${job.script.montagePlan.generatedVisuals.length} (товар остаётся исходным)`);
     }
   }
+  if (job.artifacts.some((artifact) => artifact.kind === "quality_report")) {
+    lines.push("Проверка качества: пройдена");
+  }
   if (job.publications.some((item) => item.url)) {
     lines.push("", "Публикации:");
     for (const item of job.publications) {
       lines.push(`• ${item.platform}: ${item.url ?? item.error ?? item.status}`);
+      if (item.metrics) lines.push(`  Просмотры: ${item.metrics.views} · лайки: ${item.metrics.likes} · комментарии: ${item.metrics.comments}`);
     }
   }
   if (job.error) lines.push("", `Ошибка: ${job.error}`);

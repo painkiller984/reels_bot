@@ -21,6 +21,7 @@ describe("content workflow", () => {
     const published = await jobService.publish("user-1", job.id);
     expect(published.status).toBe("published");
     expect(published.publications.every((item) => item.status === "published")).toBe(true);
+    expect(published.publications.every((item) => item.metrics?.views === 0)).toBe(true);
   });
 
   it("does not persist HeyGen integrated TTS control URIs as files", async () => {
@@ -76,6 +77,41 @@ describe("content workflow", () => {
     expect(result.productionRequeued).toBe(1);
     await queue.drain();
     expect((await jobService.get("user-3", job.id)).status).toBe("ready_for_approval");
+  });
+
+  it("resumes from persisted expensive artifacts instead of paying for them again", async () => {
+    const calls = { script: 0, audio: 0, avatar: 0, render: 0, validate: 0 };
+    const media: MediaPipeline = {
+      synthesizeSpeech: async () => { calls.audio += 1; return "new-audio.mp3"; },
+      createAvatar: async () => { calls.avatar += 1; return "new-avatar.mp4"; },
+      render: async () => { calls.render += 1; return "new-render.mp4"; },
+      validate: async () => { calls.validate += 1; return "new-quality.json"; },
+    };
+    const { repository, jobService } = createContainer(undefined, undefined, media, {
+      generate: async () => { calls.script += 1; throw new Error("script must be reused"); },
+    }, undefined, {
+      name: "durable-test",
+      persist: async (jobId, artifact) => `r2://bucket/${jobId}/${artifact.kind}`,
+      materialize: async (uri) => `materialized-${uri.split("/").at(-1)}`,
+      createDownloadUrl: async () => undefined,
+    });
+    const job = await jobService.create("durable-user", { topic: "Возобновляемый ролик", productImageFileId });
+    job.script = {
+      hook: "Готовый хук.",
+      body: "Готовый основной текст сценария.",
+      callToAction: "Посмотрите подробнее.",
+    };
+    job.artifacts = [
+      { kind: "audio", uri: "r2://bucket/job/audio", createdAt: new Date() },
+      { kind: "avatar_video", uri: "r2://bucket/job/avatar", createdAt: new Date() },
+    ];
+    await repository.save(job);
+
+    const ready = await jobService.produce("durable-user", job.id);
+
+    expect(ready.status).toBe("ready_for_approval");
+    expect(calls).toEqual({ script: 0, audio: 0, avatar: 0, render: 1, validate: 1 });
+    expect(ready.artifacts.every((artifact) => artifact.uri.startsWith("r2://"))).toBe(true);
   });
 
   it("does not endlessly recover the same crashing production", async () => {

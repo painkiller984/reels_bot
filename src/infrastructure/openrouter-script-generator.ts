@@ -10,6 +10,7 @@ export interface OpenRouterScriptOptions {
   imageLoadTimeoutMs?: number;
   requestTimeoutMs?: number;
   maxAttempts?: number;
+  allowFallback?: boolean;
 }
 
 async function within<T>(task: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -197,7 +198,7 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
       }
     }
     const requestedWords = Math.max(15, Math.round(brief.durationSec * 2.05));
-    const maxAttempts = this.options.maxAttempts ?? 2;
+    const maxAttempts = this.options.maxAttempts ?? 3;
     const requestTimeoutMs = this.options.requestTimeoutMs ?? 12_000;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
@@ -215,7 +216,8 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
               content:
                 "Ты режиссёр коротких вертикальных рекламных видео. Верни строго JSON со сценарием и монтажным планом. " +
                 "Текст должен естественно звучать вслух, начинаться без приветствия, не содержать непроверяемых обещаний, " +
-                `состоять примерно из ${requestedWords} слов и быть написан на языке ${brief.language}. ` +
+                `содержать от ${Math.floor(brief.durationSec * 1.45)} до ${Math.ceil(brief.durationSec * 2.5)} слов (цель — ${requestedWords}) и быть написан на языке ${brief.language}. ` +
+                (attempt > 1 ? "Предыдущий вариант не прошёл проверку; точно соблюди объём и JSON-схему. " : "") +
                 "Создай 4–7 быстрых сцен, чередуй аватара и товар, используй разные вылеты и переходы. " +
                 "generatedVisuals добавляй только когда фон действительно улучшает ролик, максимум два. " +
                 "Генерируемый кадр не должен содержать товар, упаковку, логотип, текст или вымышленный интерфейс: " +
@@ -236,7 +238,10 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
         if (!text) throw new Error("OpenRouter did not return a script");
         return normalizeMontagePlan(brief, parseScriptResponse(text, brief.durationSec));
       } catch (error) {
-        if (attempt === maxAttempts) return createFallbackScript(brief);
+        if (attempt === maxAttempts) {
+          if (this.options.allowFallback !== false) return createFallbackScript(brief);
+          throw new Error(`Не удалось создать корректный сценарий после ${maxAttempts} попыток: ${error instanceof Error ? error.message : String(error)}`);
+        }
         await new Promise((resolveDelay) => setTimeout(resolveDelay, attempt * 500));
       }
     }

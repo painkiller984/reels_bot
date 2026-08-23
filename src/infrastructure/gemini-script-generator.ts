@@ -7,6 +7,7 @@ export interface GeminiScriptOptions {
   apiKey: string;
   model: string;
   telegramFiles?: TelegramFileClient;
+  allowFallback?: boolean;
 }
 
 interface GeminiResponse {
@@ -47,7 +48,9 @@ export class GeminiScriptGenerator implements ScriptGenerator {
                     "Чередуй аватара, полноэкранный товар и карточки, выбирай разные разрешённые motion/transition. " +
                     "generatedVisuals добавляй только для недостающих фонов, максимум два, без товара, логотипов, текста и вымышленных интерфейсов. " +
                     "Сценарий должен быть без приветствия и непроверяемых обещаний. " +
-                    `Язык: ${brief.language}. Примерный объём: ${requestedWords} слов. Бриф: ${JSON.stringify(brief)}`,
+                    `Язык: ${brief.language}. Строгий объём: от ${Math.floor(brief.durationSec * 1.45)} до ${Math.ceil(brief.durationSec * 2.5)} слов, цель — ${requestedWords}. ` +
+                    (attempt > 1 ? "Предыдущий ответ не прошёл проверку: исправь объём и сохрани факты брифа. " : "") +
+                    `Бриф: ${JSON.stringify(brief)}`,
                 },
                 ...productImages.map(inlineImage),
               ],
@@ -65,7 +68,10 @@ export class GeminiScriptGenerator implements ScriptGenerator {
         if (!text) throw new Error("Gemini не вернул сценарий");
         return normalizeMontagePlan(brief, parseScriptResponse(text, brief.durationSec));
       } catch {
-        if (attempt === 3) return createFallbackScript(brief);
+        if (attempt === 3) {
+          if (this.options.allowFallback !== false) return createFallbackScript(brief);
+          throw new Error("Gemini не смог создать корректный сценарий после трёх попыток; платная генерация HeyGen не запускалась");
+        }
         await new Promise((resolveDelay) => setTimeout(resolveDelay, attempt * 500));
       }
     }
