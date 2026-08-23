@@ -108,6 +108,8 @@ if (!config.TELEGRAM_BOT_TOKEN) {
         artifactsDir: config.ARTIFACTS_DIR,
         ffmpegPath,
         ffprobePath,
+        outputWidth: config.MONTAGE_WIDTH,
+        outputHeight: config.MONTAGE_HEIGHT,
         ...(speechSynthesizer ? { speechSynthesizer } : {}),
         ...(avatarGenerator ? { avatarGenerator } : {}),
         avatarHandlesSpeech: config.TTS_PROVIDER === "heygen",

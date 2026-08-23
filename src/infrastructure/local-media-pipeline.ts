@@ -45,6 +45,8 @@ export interface LocalMediaOptions {
   downloadBackgroundMusic?: (query: string, destination: string) => Promise<string>;
   brollBackgroundGenerator?: BrollBackgroundGenerator;
   avatarHandlesSpeech?: boolean;
+  outputWidth?: number;
+  outputHeight?: number;
 }
 
 export class LocalMediaPipeline implements MediaPipeline {
@@ -217,7 +219,7 @@ export class LocalMediaPipeline implements MediaPipeline {
     const checks = {
       hasVideo: Boolean(video),
       hasAudio: Boolean(audio),
-      verticalVideo: Boolean(video?.width && video.height && video.height > video.width && video.width >= 720),
+      verticalVideo: Boolean(video?.width && video.height && video.height > video.width && video.width >= (this.options.outputWidth ?? 720)),
       codecsSupported: video?.codec_name === "h264" && audio?.codec_name === "aac",
       frameRateReasonable: frameRate >= 24 && frameRate <= 60,
       durationReasonable: duration >= Math.max(5, job.brief.durationSec * 0.65)
@@ -296,7 +298,11 @@ export class LocalMediaPipeline implements MediaPipeline {
   }
 
   private productMontageFilter(productCount: number, backgrounds: GeneratedBackground[], duration: number, plan: MontagePlan): { filter: string; output: string } {
-    const chains: string[] = ["[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1[avatarbase]"];
+    const width = this.options.outputWidth ?? 720;
+    const height = this.options.outputHeight ?? 1280;
+    const foregroundWidth = Math.round(width * 650 / 720);
+    const foregroundHeight = Math.round(height * 1080 / 1280);
+    const chains: string[] = [`[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1[avatarbase]`];
     const totalWeight = plan.scenes.reduce((sum, scene) => sum + scene.durationWeight, 0);
     let cursor = 0;
     const scenes = plan.scenes.map((scene, index) => {
@@ -345,14 +351,14 @@ export class LocalMediaPipeline implements MediaPipeline {
 
       if (timed.scene.kind === "product_fullscreen") {
         if (timed.background >= 0) {
-          chains.push(`[s${index}backgroundsrc]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,eq=brightness=-0.14[s${index}bg]`);
-          chains.push(`[s${index}productsrc]scale=650:1080:force_original_aspect_ratio=decrease[s${index}fg]`);
+          chains.push(`[s${index}backgroundsrc]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},eq=brightness=-0.14[s${index}bg]`);
+          chains.push(`[s${index}productsrc]scale=${foregroundWidth}:${foregroundHeight}:force_original_aspect_ratio=decrease[s${index}fg]`);
         } else {
           chains.push(`[s${index}productsrc]split=2[s${index}bgsrc][s${index}fgsrc]`);
-          chains.push(`[s${index}bgsrc]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=22:2,eq=brightness=-0.24:saturation=1.15[s${index}bg]`);
-          chains.push(`[s${index}fgsrc]scale=650:1080:force_original_aspect_ratio=decrease[s${index}fg]`);
+          chains.push(`[s${index}bgsrc]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=16:1,eq=brightness=-0.24:saturation=1.15[s${index}bg]`);
+          chains.push(`[s${index}fgsrc]scale=${foregroundWidth}:${foregroundHeight}:force_original_aspect_ratio=decrease[s${index}fg]`);
         }
-        const motion = this.fullscreenMotion(timed.scene, sceneLength);
+        const motion = this.fullscreenMotion(timed.scene, sceneLength, width, height);
         chains.push(`[s${index}bg][s${index}fg]overlay=(W-w)/2:(H-h)/2,${motion},format=rgba,fade=t=in:st=${start}:d=${fade.toFixed(3)}:alpha=1,fade=t=out:st=${fadeOut}:d=${fade.toFixed(3)}:alpha=1[s${index}visual]`);
         overlayLabel = `s${index}visual`;
       } else {
@@ -374,18 +380,18 @@ export class LocalMediaPipeline implements MediaPipeline {
     return { filter: chains.join(";"), output: `[${current}]` };
   }
 
-  private fullscreenMotion(scene: MontageScene, sceneLength: number): string {
+  private fullscreenMotion(scene: MontageScene, sceneLength: number, width: number, height: number): string {
     const frames = Math.max(1, Math.round(sceneLength * 25));
     if (scene.motion === "zoom_out") {
-      return "zoompan=z='if(eq(on,0),1.10,max(zoom-0.0012,1.0))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=720x1280:fps=25";
+      return `zoompan=z='if(eq(on,0),1.10,max(zoom-0.0012,1.0))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=25`;
     }
     if (scene.motion === "pan_left") {
-      return `zoompan=z=1.08:x='(iw-iw/zoom)*min(on/${frames},1)':y='ih/2-(ih/zoom/2)':d=1:s=720x1280:fps=25`;
+      return `zoompan=z=1.08:x='(iw-iw/zoom)*min(on/${frames},1)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=25`;
     }
     if (scene.motion === "pan_right") {
-      return `zoompan=z=1.08:x='(iw-iw/zoom)*(1-min(on/${frames},1))':y='ih/2-(ih/zoom/2)':d=1:s=720x1280:fps=25`;
+      return `zoompan=z=1.08:x='(iw-iw/zoom)*(1-min(on/${frames},1))':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=25`;
     }
-    return "zoompan=z='min(zoom+0.0012,1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=720x1280:fps=25";
+    return `zoompan=z='min(zoom+0.0012,1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=25`;
   }
 
   private scenePosition(scene: MontageScene, startTime: number, split: boolean, index: number): { x: string; y: string } {
