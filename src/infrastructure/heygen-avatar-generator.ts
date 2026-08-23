@@ -12,6 +12,7 @@ export interface HeyGenAvatarOptions {
   aspectRatio: "9:16" | "16:9";
   defaultAvatarId?: string;
   voiceId?: string;
+  maxEstimatedJobCostUsd: number;
   telegramFiles: TelegramFileClient;
 }
 
@@ -19,6 +20,13 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
   constructor(private readonly options: HeyGenAvatarOptions) {}
 
   async generate(job: ContentJob, audioFile: string, outputFile: string): Promise<void> {
+    const createsAvatar = Boolean(job.brief.avatarImageFileId || job.brief.avatarPrompt);
+    const estimatedCostUsd = job.brief.durationSec * 0.05 + (createsAvatar ? 1 : 0);
+    if (estimatedCostUsd > this.options.maxEstimatedJobCostUsd) {
+      throw new Error(
+        `HeyGen safety limit: estimated $${estimatedCostUsd.toFixed(2)} exceeds $${this.options.maxEstimatedJobCostUsd.toFixed(2)}`,
+      );
+    }
     const avatarId = job.brief.avatarImageFileId
       ? await this.createPhotoAvatar(job, dirname(outputFile))
       : await this.createGeneratedAvatar(job);
@@ -36,6 +44,7 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
         aspect_ratio: this.options.aspectRatio,
         fit: "cover",
         ...(usesIntegratedVoice ? { script: narration, ...(this.options.voiceId ? { voice_id: this.options.voiceId } : {}) } : { audio_asset_id: audioAssetId }),
+        ...(usesIntegratedVoice ? { voice_settings: { locale: job.brief.language === "ru" ? "ru-RU" : job.brief.language } } : {}),
         output_format: "mp4",
         caption: { file_format: "srt" },
         motion_prompt: "Natural presenter gestures, looking into the camera",
@@ -43,10 +52,16 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
       }),
     });
     if (!created.video_id) throw new Error("HeyGen did not return video_id");
-    const videoUrl = await this.waitForVideo(created.video_id);
-    const video = await fetch(videoUrl);
+    const completed = await this.waitForVideo(created.video_id);
+    const video = await fetch(completed.videoUrl);
     if (!video.ok) throw new Error(`HeyGen video download failed: ${video.status}`);
     await writeFile(outputFile, Buffer.from(await video.arrayBuffer()));
+    if (completed.subtitleUrl) {
+      const subtitles = await fetch(completed.subtitleUrl);
+      if (subtitles.ok) {
+        await writeFile(resolve(dirname(outputFile), "heygen-captions.srt"), await subtitles.text(), "utf8");
+      }
+    }
   }
 
   private async createPhotoAvatar(job: ContentJob, jobDirectory: string): Promise<string> {
@@ -66,9 +81,11 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
   }
 
   private async createGeneratedAvatar(job: ContentJob): Promise<string> {
-    if (this.options.defaultAvatarId) return this.options.defaultAvatarId;
-    const prompt = job.brief.avatarPrompt
-      ?? `A professional social media presenter suitable for ${job.brief.audience}. ${job.brief.tone} style, modern clothing, clean studio background, front-facing portrait.`;
+    if (this.options.defaultAvatarId && !job.brief.avatarPrompt) return this.options.defaultAvatarId;
+    if (!job.brief.avatarPrompt) {
+      throw new Error("HEYGEN_DEFAULT_AVATAR_ID is required for the cost-safe reusable avatar mode");
+    }
+    const prompt = job.brief.avatarPrompt;
     const result = await this.request<{ avatar_item?: { id?: string; status?: string }; avatar_group?: { id?: string } }>("/v3/avatars", {
       method: "POST",
       headers: { "content-type": "application/json", "Idempotency-Key": `generated-avatar-${job.id}` },
@@ -105,10 +122,15 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
     return id;
   }
 
-  private async waitForVideo(videoId: string): Promise<string> {
+  private async waitForVideo(videoId: string): Promise<{ videoUrl: string; subtitleUrl?: string }> {
     for (let attempt = 0; attempt < 120; attempt += 1) {
-      const result = await this.request<{ status?: string; video_url?: string; failure_message?: string }>(`/v3/videos/${encodeURIComponent(videoId)}`);
-      if (result.status === "completed" && result.video_url) return result.video_url;
+      const result = await this.request<{ status?: string; video_url?: string; subtitle_url?: string; failure_message?: string }>(`/v3/videos/${encodeURIComponent(videoId)}`);
+      if (result.status === "completed" && result.video_url) {
+        return {
+          videoUrl: result.video_url,
+          ...(result.subtitle_url ? { subtitleUrl: result.subtitle_url } : {}),
+        };
+      }
       if (result.status === "failed") throw new Error(`HeyGen rendering failed: ${result.failure_message ?? "unknown error"}`);
       await new Promise((resolveDelay) => setTimeout(resolveDelay, 5_000));
     }

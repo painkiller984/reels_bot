@@ -71,6 +71,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
         telegramFiles,
         ...(config.HEYGEN_VOICE_ID ? { voiceId: config.HEYGEN_VOICE_ID } : {}),
         ...(config.HEYGEN_DEFAULT_AVATAR_ID ? { defaultAvatarId: config.HEYGEN_DEFAULT_AVATAR_ID } : {}),
+        maxEstimatedJobCostUsd: config.HEYGEN_MAX_ESTIMATED_JOB_COST_USD,
       })
     : undefined;
   const prisma = config.DATABASE_URL ? createPrismaClient(config.DATABASE_URL) : undefined;

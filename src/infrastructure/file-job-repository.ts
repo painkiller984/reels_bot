@@ -14,11 +14,15 @@ function decode(value: unknown): ContentJob[] {
   if (!Array.isArray(value)) throw new Error("Invalid jobs data file: expected an array");
   return value.map((raw) => {
     const row = raw as Record<string, unknown>;
+    const storedBrief = row.brief as Record<string, unknown>;
     const job: ContentJob = {
       id: String(row.id),
       userId: String(row.userId),
       status: JobStatusSchema.parse(row.status),
-      brief: BriefSchema.parse(row.brief),
+      brief: BriefSchema.parse({
+        ...storedBrief,
+        productImageFileId: storedBrief.productImageFileId ?? "legacy-missing-product-image",
+      }),
       artifacts: ArtifactSchema.array().parse(row.artifacts),
       publications: PublicationSchema.array().parse(row.publications),
       createdAt: new Date(String(row.createdAt)),

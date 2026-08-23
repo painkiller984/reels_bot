@@ -58,6 +58,12 @@ services:
         sync: false
       - key: HEYGEN_API_KEY
         sync: false
+      - key: HEYGEN_DEFAULT_AVATAR_ID
+        sync: false
+      - key: HEYGEN_VOICE_ID
+        sync: false
+      - key: HEYGEN_MAX_ESTIMATED_JOB_COST_USD
+        value: 3
 
 databases:
   - name: reels-bot-db

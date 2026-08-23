@@ -61,12 +61,14 @@ function platformKeyboard(): InlineKeyboard {
 
 function avatarKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Создать автоматически", "brief:avatar:generated").row()
-    .text("Описать внешность", "brief:avatar:describe").row()
-    .text("Загрузить фото человека", "brief:avatar:photo");
+    .text("Готовый аватар — экономно", "brief:avatar:generated").row()
+    .text("Создать новую внешность — +$1", "brief:avatar:describe").row()
+    .text("Аватар из фото — +$1", "brief:avatar:photo");
 }
 
 function draftSummary(draft: BriefDraft): string {
+  const avatarCreationCost = draft.avatarMode === "photo" || Boolean(draft.avatarPrompt) ? 1 : 0;
+  const estimatedHeygenCost = (draft.durationSec ?? 45) * 0.05 + avatarCreationCost;
   return [
     "Проверьте бриф:",
     `Тема: ${draft.topic}`,
@@ -76,8 +78,9 @@ function draftSummary(draft: BriefDraft): string {
     `Длительность: ${draft.durationSec} сек`,
     `Платформы: ${draft.platforms?.join(", ")}`,
     `Фото продукта: ${draft.productImageFileId ? "добавлено" : "обязательно"}`,
-    `Аватар: ${draft.avatarMode === "photo" ? "из фотографии" : draft.avatarPrompt ? `сгенерированный: ${draft.avatarPrompt}` : "сгенерированный автоматически"}`,
+    `Аватар: ${draft.avatarMode === "photo" ? "новый из фотографии" : draft.avatarPrompt ? `новый по описанию: ${draft.avatarPrompt}` : "готовый многоразовый"}`,
     `CTA: ${draft.callToAction ?? "автоматический"}`,
+    `Ориентировочная стоимость HeyGen: $${estimatedHeygenCost.toFixed(2)} (по текущему API-тарифу)`,
   ].join("\n");
 }
 
@@ -192,10 +195,10 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
       await ctx.reply("Шаг 4/9. Какая цель ролика?", { reply_markup: goalKeyboard() });
     } else if (choice === "describe") {
       drafts.update(userId, { avatarMode: "generated", stage: "avatar_prompt" });
-      await ctx.reply("Опишите внешность ведущего: пол, возраст, одежду и стиль. Например: «молодая женщина в деловом костюме, современная студия».");
+      await ctx.reply("Этот вариант создаст новый HeyGen-аватар и добавит примерно $1 к стоимости. Опишите внешность ведущего: пол, возраст, одежду и стиль.");
     } else {
       drafts.update(userId, { avatarMode: "photo", stage: "avatar_image" });
-      await ctx.reply("Пришлите фронтальную фотографию человека с хорошим освещением.");
+      await ctx.reply("Создание аватара из фото добавит примерно $1 к стоимости. Пришлите фронтальную фотографию человека с хорошим освещением.");
     }
   });
 

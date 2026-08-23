@@ -40,6 +40,7 @@ const ConfigSchema = z.object({
   HEYGEN_API_KEY: optionalString,
   HEYGEN_DEFAULT_AVATAR_ID: optionalString,
   HEYGEN_VOICE_ID: optionalString,
+  HEYGEN_MAX_ESTIMATED_JOB_COST_USD: z.coerce.number().positive().max(100).default(3),
   HEYGEN_RESOLUTION: z.enum(["720p", "1080p"]).default("720p"),
   HEYGEN_ASPECT_RATIO: z.enum(["9:16", "16:9"]).default("9:16"),
   YOUTUBE_CLIENT_ID: optionalString,
