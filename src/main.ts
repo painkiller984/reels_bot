@@ -24,9 +24,14 @@ import { TelegramFileClient } from "./infrastructure/telegram-file-client.js";
 import { HealthServer } from "./infrastructure/health-server.js";
 import { HeyGenMusicClient } from "./infrastructure/heygen-music-client.js";
 import { FileYoutubeTokenStore, PrismaYoutubeTokenStore } from "./infrastructure/youtube-token-store.js";
+import { deployPrismaMigrations } from "./infrastructure/prisma-migrator.js";
 
 const config = readConfig();
 const logger = pino({ level: config.LOG_LEVEL });
+await deployPrismaMigrations(config.DATABASE_URL);
+if (config.DATABASE_URL) {
+  logger.info("PostgreSQL migrations applied");
+}
 const require = createRequire(import.meta.url);
 const bundledFfmpeg = require("ffmpeg-static") as string | null;
 const bundledFfprobe = (require("ffprobe-static") as { path?: string }).path;
