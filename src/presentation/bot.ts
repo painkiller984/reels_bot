@@ -37,6 +37,31 @@ function userIdOf(ctx: Context): string {
   return String(id);
 }
 
+function userFacingError(error: unknown): string {
+  return error instanceof z.ZodError
+    ? `Некорректные данные: ${error.issues.map((issue) => issue.message).join(", ")}`
+    : error instanceof Error ? error.message : "Неизвестная ошибка";
+}
+
+function safeErrorDetails(error: unknown): { name: string; message: string } {
+  const name = error instanceof Error ? error.name : "UnknownError";
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const message = rawMessage
+    .replace(/\b\d{8,12}:[A-Za-z0-9_-]{25,}\b/gu, "[REDACTED_TELEGRAM_TOKEN]")
+    .replace(/Bearer\s+\S+/giu, "Bearer [REDACTED]")
+    .slice(0, 500);
+  return { name, message };
+}
+
+async function reportBotError(ctx: Context, error: unknown): Promise<void> {
+  console.error(JSON.stringify({ event: "telegram_update_failed", ...safeErrorDetails(error) }));
+  try {
+    await ctx.reply(`Не удалось выполнить команду: ${userFacingError(error)}`);
+  } catch (replyError) {
+    console.error(JSON.stringify({ event: "telegram_error_reply_failed", ...safeErrorDetails(replyError) }));
+  }
+}
+
 function goalKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("Охваты", "brief:goal:reach").text("Продажи", "brief:goal:sales").row()
@@ -133,6 +158,15 @@ async function acceptImage(ctx: Context, drafts: DraftStore, fileId: string): Pr
 export function createBot(token: string, jobs: JobService, queue: JobQueue, capabilities: BotCapabilities, artifactStore: ArtifactStore, youtube?: YoutubeConnection): Bot {
   const bot = new Bot(token);
   const drafts = new DraftStore();
+
+  // bot.catch only protects long polling. This middleware also protects webhook mode.
+  bot.use(async (ctx, next) => {
+    try {
+      await next();
+    } catch (error) {
+      await reportBotError(ctx, error);
+    }
+  });
 
   const help =
     "/create — пошагово создать ролик\n" +
@@ -367,6 +401,12 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     `LLM: ${capabilities.scripts}\nMedia: ${capabilities.media}\nStorage: ${capabilities.storage}`,
   ));
 
+  bot.on("message:text", async (ctx) => {
+    if (ctx.message.text.startsWith("/")) {
+      await ctx.reply("Неизвестная команда. Откройте /help. ID указывается через пробел, например: /preview abc123");
+    }
+  });
+
   queue.onCompleted(async (kind, userId, jobId) => {
     const job = await jobs.get(userId, jobId);
     if (kind === "produce") {
@@ -382,12 +422,7 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     }
   });
 
-  bot.catch(async (error) => {
-    const message = error.error instanceof z.ZodError
-      ? `Некорректные данные: ${error.error.issues.map((issue) => issue.message).join(", ")}`
-      : error.error instanceof Error ? error.error.message : "Неизвестная ошибка";
-    await error.ctx.reply(`Не удалось выполнить команду: ${message}`);
-  });
+  bot.catch((error) => reportBotError(error.ctx, error.error));
 
   return bot;
 }
