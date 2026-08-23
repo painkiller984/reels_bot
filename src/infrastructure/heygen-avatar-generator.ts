@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { ContentJob } from "../domain/job.js";
@@ -33,9 +34,10 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
     const usesIntegratedVoice = audioFile.startsWith("heygen://");
     const audioAssetId = usesIntegratedVoice ? undefined : await this.uploadAsset(audioFile, "audio/mpeg");
     const narration = [job.script?.hook, job.script?.body, job.script?.callToAction].filter(Boolean).join(" ");
+    const narrationKey = createHash("sha256").update(narration).digest("hex").slice(0, 16);
     const created = await this.request<{ video_id?: string }>("/v3/videos", {
       method: "POST",
-      headers: { "content-type": "application/json", "Idempotency-Key": `video-${job.id}` },
+      headers: { "content-type": "application/json", "Idempotency-Key": `video-${job.id}-${narrationKey}` },
       body: JSON.stringify({
         type: "avatar",
         avatar_id: avatarId,
