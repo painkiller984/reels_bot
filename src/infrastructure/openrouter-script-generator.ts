@@ -98,7 +98,9 @@ export function parseScriptResponse(text: string, durationSec: number): Script {
   if (objectStart < 0 || objectEnd <= objectStart) throw new Error("OpenRouter response does not contain JSON");
   const script = ScriptSchema.parse(JSON.parse(withoutFence.slice(objectStart, objectEnd + 1)));
   const words = spokenWordCount(script);
-  const minimumWords = Math.max(10, Math.floor(durationSec * 0.65));
+  // HeyGen speaks roughly two Russian words per second. A much shorter script
+  // produces a technically valid avatar video that fails the duration gate.
+  const minimumWords = Math.max(12, Math.floor(durationSec * 1.45));
   const maximumWords = Math.ceil(durationSec * 2.8);
   if (words < minimumWords || words > maximumWords) {
     throw new Error(`OpenRouter script length is unsuitable: ${words} words for ${durationSec} seconds`);
@@ -111,11 +113,28 @@ export function createFallbackScript(brief: Brief): Script {
   const suppliedCallToAction = brief.callToAction?.trim().split(/\s+/u).slice(0, 12).join(" ");
   const callToAction = suppliedCallToAction
     || (brief.goal === "sales" ? "Посмотрите детали перед выбором." : "Сохраните ролик, чтобы не потерять.");
+  const bodySentences = [
+    "Сначала оцените внешний вид продукта и то, насколько удобно им будет пользоваться каждый день.",
+    "Обратите внимание на основные функции, материалы и детали, которые важны именно для вашей задачи.",
+    "Сравните ключевые характеристики с альтернативами и проверьте, какие возможности пригодятся вам чаще всего.",
+    "Посмотрите на продукт с разных сторон, чтобы заранее понять его сильные стороны и ограничения.",
+    "Уточните совместимость, комплектацию и условия использования перед тем, как принимать окончательное решение.",
+    "Практический сценарий помогает понять, насколько продукт экономит время и упрощает привычные действия.",
+    "Не ориентируйтесь только на внешний вид: проверьте реальные параметры и отзывы пользователей.",
+    "Так вы сможете выбрать подходящий вариант без лишних компромиссов и неожиданных расходов.",
+  ];
+  const targetWords = Math.max(24, Math.round(brief.durationSec * 1.8));
+  const hook = `${topic}: главное за несколько секунд.`;
+  const selectedBody: string[] = [];
+  let wordCount = `${hook} ${callToAction}`.trim().split(/\s+/u).length;
+  for (let index = 0; wordCount < targetWords; index += 1) {
+    const sentence = bodySentences[index % bodySentences.length]!;
+    selectedBody.push(sentence);
+    wordCount += sentence.split(/\s+/u).length;
+  }
   return ScriptSchema.parse({
-    hook: `${topic}: главное за несколько секунд.`,
-    body: brief.durationSec <= 15
-      ? "Посмотрите на продукт: оцените его назначение, основные функции и удобство для вашей задачи."
-      : "На изображении показан продукт для поставленной задачи. Оцените его основные функции, удобство и соответствие вашим требованиям. Перед выбором проверьте характеристики и условия использования.",
+    hook,
+    body: selectedBody.join(" "),
     callToAction,
     montagePlan: createFallbackMontagePlan(brief),
   });

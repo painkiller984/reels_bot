@@ -277,7 +277,7 @@ export class LocalMediaPipeline implements MediaPipeline {
     };
     const output = resolve(await this.jobDirectory(job.id), "quality.json");
     await writeFile(output, JSON.stringify(report, null, 2), "utf8");
-    if (!passed) throw new Error(`Media quality gate failed: ${JSON.stringify(checks)}`);
+    if (!passed) throw new Error(`Media quality gate failed: duration=${duration.toFixed(2)}s expected=${job.brief.durationSec}s checks=${JSON.stringify(checks)}`);
     return output;
   }
 

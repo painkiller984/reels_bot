@@ -7,7 +7,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("OpenRouter script safety", () => {
   it("extracts schema JSON even when a free model adds a safety prefix", () => {
     const script = parseScriptResponse(
-      'User Safety: safe\n{"hook":"Смотрите внимательно.","body":"Этот продукт помогает быстрее выполнить привычную задачу и экономит время каждый день.","callToAction":"Сохраните ролик и изучите детали."}',
+      'User Safety: safe\n{"hook":"Смотрите внимательно.","body":"Этот продукт помогает быстрее выполнить привычную задачу, экономит время каждый день и упрощает основные рабочие процессы.","callToAction":"Сохраните ролик и изучите детали."}',
       15,
     );
     expect(script.hook).toBe("Смотрите внимательно.");
@@ -19,6 +19,14 @@ describe("OpenRouter script safety", () => {
       JSON.stringify({ hook: "Хук", body, callToAction: "Действуйте" }),
       15,
     )).toThrow(/length is unsuitable/u);
+  });
+
+  it("rejects an underlength script that would make HeyGen end too early", () => {
+    expect(() => parseScriptResponse(JSON.stringify({
+      hook: "Мощный смартфон.",
+      body: "Быстрый экран и хорошая камера.",
+      callToAction: "Посмотрите подробнее.",
+    }), 30)).toThrow(/length is unsuitable/u);
   });
 
   it("creates a usable deterministic fallback", () => {
@@ -36,6 +44,22 @@ describe("OpenRouter script safety", () => {
     expect(script.hook).toContain("Обзор приложения");
     expect(script.callToAction.length).toBeGreaterThan(10);
     expect(script.montagePlan?.scenes.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("scales the deterministic fallback to the selected duration", () => {
+    const script = createFallbackScript({
+      topic: "Обзор смартфона",
+      goal: "reach",
+      audience: "покупатели",
+      tone: "живой",
+      language: "ru",
+      durationSec: 60,
+      platforms: ["youtube"],
+      productImageFileId: "image",
+      avatarMode: "generated",
+    });
+    const words = [script.hook, script.body, script.callToAction].join(" ").split(/\s+/u).length;
+    expect(words).toBeGreaterThanOrEqual(108);
   });
 
   it("sanitizes the AI montage plan and avoids paying for unused backgrounds", () => {

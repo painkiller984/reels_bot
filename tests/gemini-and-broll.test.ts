@@ -27,7 +27,7 @@ describe("Gemini and generated B-roll", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       candidates: [{ content: { parts: [{ text: JSON.stringify({
         hook: "Свежесть видно сразу.",
-        body: "Хрустящий огурец подходит для салатов и лёгких домашних закусок каждый день.",
+        body: "Хрустящий огурец подходит для салатов и лёгких домашних закусок каждый день, сохраняя свежий вкус и приятную текстуру.",
         callToAction: "Выберите свежий продукт сегодня.",
       }) }] } }],
     }), { status: 200, headers: { "content-type": "application/json" } }));
