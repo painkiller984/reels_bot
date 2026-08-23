@@ -1,0 +1,51 @@
+import { config as loadEnv } from "dotenv";
+import { z } from "zod";
+
+loadEnv();
+
+const optionalString = z.preprocess((value) => value === "" ? undefined : value, z.string().min(1).optional());
+const optionalPostgresUrl = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  z.string().url().startsWith("postgresql://").optional(),
+);
+
+const ConfigSchema = z.object({
+  APP_ENV: z.enum(["development", "test", "production"]).default("development"),
+  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
+  PORT: z.coerce.number().int().min(1).max(65535).default(10000),
+  TELEGRAM_BOT_TOKEN: optionalString,
+  TELEGRAM_WEBHOOK_URL: optionalString,
+  DATABASE_URL: optionalPostgresUrl,
+  DATA_FILE: z.string().min(1).default(".data/jobs.json"),
+  ARTIFACTS_DIR: z.string().min(1).default("artifacts"),
+  MEDIA_MODE: z.enum(["local", "mock"]).default("local"),
+  FFMPEG_PATH: z.string().min(1).default("ffmpeg"),
+  FFPROBE_PATH: z.string().min(1).default("ffprobe"),
+  SCRIPT_PROVIDER: z.enum(["auto", "openai", "openrouter", "mock"]).default("auto"),
+  OPENAI_API_KEY: optionalString,
+  OPENAI_MODEL: z.string().min(1).default("gpt-5.6-terra"),
+  OPENROUTER_API_KEY: optionalString,
+  OPENROUTER_MODEL: z.string().min(1).default("openrouter/free"),
+  TTS_PROVIDER: z.enum(["google", "openrouter", "heygen", "local"]).default("heygen"),
+  OPENROUTER_TTS_MODEL: z.string().min(1).default("openai/gpt-4o-mini-tts-2025-12-15"),
+  OPENROUTER_TTS_VOICE: z.string().min(1).default("alloy"),
+  GOOGLE_TTS_API_KEY: optionalString,
+  GOOGLE_TTS_VOICE: z.string().min(1).default("ru-RU-Wavenet-D"),
+  HEYGEN_API_KEY: optionalString,
+  HEYGEN_DEFAULT_AVATAR_ID: optionalString,
+  HEYGEN_VOICE_ID: optionalString,
+  HEYGEN_RESOLUTION: z.enum(["720p", "1080p"]).default("720p"),
+  HEYGEN_ASPECT_RATIO: z.enum(["9:16", "16:9"]).default("9:16"),
+  YOUTUBE_CLIENT_ID: optionalString,
+  YOUTUBE_CLIENT_SECRET: optionalString,
+  YOUTUBE_OAUTH_REDIRECT_URI: z.string().url().default("http://localhost:3000/oauth/youtube/callback"),
+  YOUTUBE_OAUTH_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  YOUTUBE_TOKEN_FILE: z.string().min(1).default(".data/youtube-tokens.json"),
+  YOUTUBE_PRIVACY_STATUS: z.enum(["private", "unlisted", "public"]).default("private"),
+});
+
+export type AppConfig = z.infer<typeof ConfigSchema>;
+
+export function readConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
+  return ConfigSchema.parse(environment);
+}

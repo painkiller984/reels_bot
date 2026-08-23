@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: reels_bot
+      POSTGRES_USER: reels
+      POSTGRES_PASSWORD: reels
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reels -d reels_bot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://reels:reels@postgres:5432/reels_bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  migrate:
+    build:
+      context: .
+      target: build
+    environment:
+      DATABASE_URL: postgresql://reels:reels@postgres:5432/reels_bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["npx", "prisma", "migrate", "deploy"]
+
+volumes:
+  postgres_data:

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+coverage/
+artifacts/
+.data/
+*.log
+.DS_Store
+*_api.png
+tg_bot_token.png
+Oauth_client_youtube.png
+.venv-stt/
+src/generated/prisma/

@@ -1,0 +1,26 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model ContentJob {
+  id           String   @id @db.VarChar(32)
+  userId       String   @db.VarChar(64)
+  status       String   @db.VarChar(32)
+  brief        Json
+  script       Json?
+  artifacts    Json
+  publications Json
+  error        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, updatedAt])
+  @@map("content_jobs")
+}
