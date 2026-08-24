@@ -34,6 +34,10 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
     const avatarId = job.brief.avatarId ?? (job.brief.avatarImageFileId
       ? await this.createPhotoAvatar(job, dirname(outputFile))
       : await this.createGeneratedAvatar(job));
+    const usesDefaultDeskAvatar = avatarId === this.options.defaultAvatarId
+      && !job.brief.avatarId
+      && !job.brief.avatarImageFileId
+      && !job.brief.avatarPrompt;
     const usesIntegratedVoice = audioFile.startsWith("heygen://");
     const audioAssetId = usesIntegratedVoice ? undefined : await this.uploadAsset(audioFile, "audio/mpeg");
     const narration = [job.script?.hook, job.script?.body, job.script?.callToAction].filter(Boolean).join(" ");
@@ -53,7 +57,9 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
         ...(usesIntegratedVoice ? { voice_settings: { locale: job.brief.language === "ru" ? "ru-RU" : job.brief.language } } : {}),
         output_format: "mp4",
         caption: { file_format: "srt" },
-        motion_prompt: "Natural presenter gestures, looking into the camera",
+        motion_prompt: usesDefaultDeskAvatar
+          ? "Male presenter seated behind a desk with an open laptop, upper body visible, looking into the camera, calm natural review gestures"
+          : "Natural presenter gestures, looking into the camera",
         expressiveness: "medium",
       }),
     });

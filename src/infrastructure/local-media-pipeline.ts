@@ -331,24 +331,31 @@ export class LocalMediaPipeline implements MediaPipeline {
     const sourceDuration = await this.mediaDuration(input.source);
     const avatarDuration = await this.mediaDuration(input.avatarUri);
     const duration = Math.max(10, Math.min(input.targetDuration, sourceDuration || input.targetDuration, avatarDuration || input.targetDuration));
-    const avatarSize = Math.round(Math.min(width, height) * 0.29);
+    // The reference layout uses the same circular talking-head treatment for
+    // both the built-in desk presenter and user-provided avatars.
+    const avatarSize = Math.round(Math.min(width, height) * 0.29 / 2) * 2;
     const position = this.avatarOverlayPosition(input.job, width, height, avatarSize);
     // The reference format keeps captions in the visual centre. The avatar is
     // placed in a corner, so the central text stays readable and does not sit
     // on top of the speaker's face.
     const subtitleStyle = "FontName=Arial,FontSize=11,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment=5,MarginL=76,MarginR=76,MarginV=0";
+    // Keep only one decoded copy of the source in memory. The previous blurred
+    // background duplicated every source frame and exhausted Render Free's
+    // 512 MB limit during 720p composition.
+    const avatarFilter = `[1:v]crop='min(iw,ih)':'min(iw,ih)':'(iw-min(iw,ih))/2':'(ih-min(iw,ih))/2',scale=${avatarSize}:${avatarSize}:flags=fast_bilinear,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte((X-W/2)^2+(Y-H/2)^2,(W/2-5)^2),255,0)'[avatar]`;
     const graph = [
-      `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=18:4,eq=brightness=-0.18[bg]`,
-      `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,setsar=1[main]`,
-      `[bg][main]overlay=(W-w)/2:(H-h)/2[base]`,
-      `[1:v]crop='min(iw,ih)':'min(iw,ih)':'(iw-min(iw,ih))/2':'(ih-min(iw,ih))/2',scale=${avatarSize}:${avatarSize},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte((X-W/2)^2+(Y-H/2)^2,(W/2-5)^2),255,0)'[avatar]`,
-      `[base][avatar]overlay=${position.x}:${position.y},subtitles='${input.captions}':force_style='${subtitleStyle}'[outv]`,
+      `color=c=0x101010:s=${width}x${height}:r=30[bg]`,
+      `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,setsar=1[main]`,
+      `[bg][main]overlay=(W-w)/2:(H-h)/2:shortest=1[base]`,
+      avatarFilter,
+      `[base][avatar]overlay=${position.x}:${position.y}:shortest=1,subtitles='${input.captions}':force_style='${subtitleStyle}'[outv]`,
       `[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,atrim=duration=${duration},apad=whole_dur=${duration}[outa]`,
     ].join(";");
     await this.ffmpeg([
       "-y", "-filter_complex_threads", "1", "-i", input.source, "-i", input.avatarUri,
       "-filter_complex", graph, "-map", "[outv]", "-map", "[outa]", "-t", String(duration),
-      "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+      "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+      "-x264-params", "rc-lookahead=0:sync-lookahead=0", "-threads", "1", "-crf", "18", "-pix_fmt", "yuv420p",
       "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", input.output,
     ]);
   }
