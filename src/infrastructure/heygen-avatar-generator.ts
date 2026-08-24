@@ -57,10 +57,13 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
         ...(usesIntegratedVoice ? { voice_settings: { locale: job.brief.language === "ru" ? "ru-RU" : job.brief.language } } : {}),
         output_format: "mp4",
         caption: { file_format: "srt" },
-        motion_prompt: usesDefaultDeskAvatar
-          ? "Male presenter seated behind a desk with an open laptop, upper body visible, looking into the camera, calm natural review gestures"
-          : "Natural presenter gestures, looking into the camera",
-        expressiveness: "medium",
+        // Public/studio video avatars already contain their recorded motion and
+        // reject Avatar IV motion_prompt with HTTP 400. Photo-based custom and
+        // generated avatars still accept the natural-motion controls.
+        ...(!usesDefaultDeskAvatar ? {
+          motion_prompt: "Natural presenter gestures, looking into the camera",
+          expressiveness: "medium",
+        } : {}),
       }),
     });
     if (!created.video_id) throw new Error("HeyGen did not return video_id");
