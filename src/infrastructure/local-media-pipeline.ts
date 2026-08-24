@@ -685,7 +685,7 @@ export class LocalMediaPipeline implements MediaPipeline {
       });
     }
     return normalized.map((cue, index) =>
-      `${index + 1}\n${this.srtTime(cue.start)} --> ${this.srtTime(cue.end)}\n${cue.text}\n`,
+      `${index + 1}\n${this.srtTime(cue.start)} --> ${this.srtTime(cue.end)}\n{\\an5}${cue.text}\n`,
     ).join("\n");
   }
 
@@ -697,7 +697,11 @@ export class LocalMediaPipeline implements MediaPipeline {
       const timing = lines[timingIndex]!.match(/(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})/u);
       if (!timing) return [];
       const text = lines.slice(timingIndex + 1)
-        .map((line) => line.replace(/<[^>]+>/gu, "").replace(/\s+/gu, " ").trim())
+        .map((line) => line
+          .replace(/\{\\[^}]+\}/gu, "")
+          .replace(/<[^>]+>/gu, "")
+          .replace(/\s+/gu, " ")
+          .trim())
         .filter(Boolean)
         .join("\n");
       if (!text) return [];

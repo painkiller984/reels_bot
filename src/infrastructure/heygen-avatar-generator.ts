@@ -50,7 +50,10 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
         avatar_id: avatarId,
         title: job.brief.topic.slice(0, 100),
         resolution: this.options.resolution,
-        aspect_ratio: this.options.aspectRatio,
+        // Preserve the complete office/laptop composition of the built-in
+        // studio look. The final reel is still rendered as 9:16 by FFmpeg;
+        // only this circular picture-in-picture source stays 16:9.
+        aspect_ratio: usesDefaultDeskAvatar ? "16:9" : this.options.aspectRatio,
         engine: { type: this.options.engine },
         fit: "cover",
         ...(usesIntegratedVoice ? { script: narration, ...(this.options.voiceId ? { voice_id: this.options.voiceId } : {}) } : { audio_asset_id: audioAssetId }),
