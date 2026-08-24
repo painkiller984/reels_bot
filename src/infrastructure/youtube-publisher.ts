@@ -50,7 +50,16 @@ export class YoutubePublisher implements SocialPublisher {
         media: { body: createReadStream(video) },
       });
       if (!result.data.id) throw new Error("YouTube не вернул идентификатор загруженного видео");
-      const metrics = await this.getMetrics(job.userId, platform, result.data.id);
+      let metrics: Awaited<ReturnType<YoutubePublisher["getMetrics"]>>;
+      try {
+        // A token limited to youtube.upload can create the video but may not
+        // read its statistics. Analytics must never turn a completed upload
+        // into a failed publication.
+        metrics = await this.getMetrics(job.userId, platform, result.data.id);
+      } catch (error) {
+        const detail = youtubeApiError(error).message;
+        console.warn(JSON.stringify({ event: "youtube_metrics_unavailable", jobId: job.id, videoId: result.data.id, error: detail }));
+      }
       return {
         url: `https://www.youtube.com/watch?v=${result.data.id}`,
         externalId: result.data.id,
