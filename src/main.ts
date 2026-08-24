@@ -31,6 +31,7 @@ import { deployPrismaMigrations } from "./infrastructure/prisma-migrator.js";
 import { LocalArtifactStore, R2ArtifactStore } from "./infrastructure/artifact-store.js";
 import { PrismaAvatarProfileStore } from "./infrastructure/prisma-avatar-profile-store.js";
 import { TelegramVideoContextProvider } from "./infrastructure/telegram-video-context.js";
+import { OpenRouterAudioTranscriber } from "./infrastructure/openrouter-audio-transcriber.js";
 
 const config = readConfig();
 const logger = pino({ level: config.LOG_LEVEL });
@@ -66,6 +67,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
     telegramFiles,
     ffmpegPath,
     scratchDir: `${config.ARTIFACTS_DIR}/video-context`,
+    ...(config.OPENROUTER_API_KEY ? { transcriber: new OpenRouterAudioTranscriber({ apiKey: config.OPENROUTER_API_KEY, model: config.OPENROUTER_STT_MODEL }) } : {}),
   });
   const musicClient = config.HEYGEN_API_KEY ? new HeyGenMusicClient(config.HEYGEN_API_KEY) : undefined;
   const speechSynthesizer = config.TTS_PROVIDER === "google"

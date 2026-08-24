@@ -33,6 +33,7 @@ const ConfigSchema = z.object({
   OPENAI_MODEL: z.string().min(1).default("gpt-5.6-terra"),
   OPENROUTER_API_KEY: optionalString,
   OPENROUTER_MODEL: z.string().min(1).default("google/gemini-3.5-flash-lite"),
+  OPENROUTER_STT_MODEL: z.string().min(1).default("openai/whisper-large-v3"),
   BROLL_PROVIDER: z.enum(["none", "openrouter"]).default("none"),
   OPENROUTER_IMAGE_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite-image"),
   OPENROUTER_BROLL_COUNT: z.coerce.number().int().min(1).max(3).default(2),

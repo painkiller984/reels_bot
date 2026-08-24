@@ -210,13 +210,14 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
   async generate(brief: Brief): Promise<Script> {
     let productImages: string[] = [];
     let videoFrames: string[] = [];
+    let videoTranscript: string | undefined;
     if (brief.sourceVideoFileId && this.options.videoContext) {
       try {
         videoFrames = await within(
-          this.options.videoContext.frames(brief.sourceVideoFileId, brief.sourceVideoDurationSec ?? brief.durationSec),
+          this.options.videoContext.analyze(brief.sourceVideoFileId, brief.sourceVideoDurationSec ?? brief.durationSec),
           55_000,
           "Video context extraction",
-        );
+        ).then((analysis) => { videoTranscript = analysis.transcript; return analysis.frames; });
       } catch (error) {
         console.warn(JSON.stringify({ event: "script_video_context_unavailable", message: error instanceof Error ? error.message.slice(0, 300) : "unknown error" }));
         if (this.options.allowFallback === false) throw new Error(`Не удалось проанализировать исходное видео до создания сценария: ${error instanceof Error ? error.message : String(error)}`);
@@ -277,7 +278,7 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
               content: productImages.length > 0 || videoFrames.length > 0
                 ? [
                     { type: "text", text: brief.sourceVideoFileId
-                      ? `Это последовательные ключевые кадры исходного видео. Сначала пойми, что реально показано, затем напиши точный обзор/комментарий по брифу. Не выдумывай функции, предметы или события, которых в кадрах нет. Тема задаёт угол обзора, но визуальные факты берутся только из кадров. Бриф: ${JSON.stringify(brief)}`
+                      ? `Это ключевые кадры и расшифровка речи исходного видео. Сначала пойми, что реально показано и сказано, затем напиши точный обзор/комментарий по брифу. Не выдумывай функции, предметы или события, которых нет в кадрах или расшифровке. Тема задаёт угол обзора. Расшифровка: ${videoTranscript ?? "В исходном видео не обнаружена речь."}. Бриф: ${JSON.stringify(brief)}`
                       : `Распознай объект ролика по всем исходным изображениям и создай единый сценарий и уникальную режиссуру по брифу: ${JSON.stringify(brief)}` },
                     ...videoFrames.map((frame) => ({ type: "image_url" as const, image_url: { url: frame } })),
                     ...productImages.map((productImage) => ({ type: "image_url" as const, image_url: { url: productImage } })),

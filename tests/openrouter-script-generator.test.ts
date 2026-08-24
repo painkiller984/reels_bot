@@ -15,7 +15,7 @@ describe("OpenRouter script safety", () => {
     }), { status: 200, headers: { "content-type": "application/json" } }));
     const generator = new OpenRouterScriptGenerator({
       apiKey: "test", model: "test", allowFallback: false,
-      videoContext: { frames: vi.fn().mockResolvedValue(["data:image/jpeg;base64,Zmlyc3Q=", "data:image/jpeg;base64,c2Vjb25k", "data:image/jpeg;base64,dGhpcmQ="]) },
+      videoContext: { analyze: vi.fn().mockResolvedValue({ frames: ["data:image/jpeg;base64,Zmlyc3Q=", "data:image/jpeg;base64,c2Vjb25k", "data:image/jpeg;base64,dGhpcmQ="], transcript: "В кадре показан смартфон." }) },
     });
     await generator.generate({
       topic: "Обзор новой модели смартфона", goal: "education", audience: "покупатели", tone: "живой", language: "ru",
