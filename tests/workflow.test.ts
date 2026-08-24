@@ -54,6 +54,20 @@ describe("content workflow", () => {
     expect(attempts).toBe(2);
   });
 
+  it("refreshes metrics for an already published video", async () => {
+    const publisher: SocialPublisher = {
+      publish: async () => ({ url: "https://www.youtube.com/watch?v=metrics", externalId: "metrics" }),
+      getMetrics: async () => ({ views: 125, likes: 9, comments: 3, capturedAt: new Date() }),
+    };
+    const { jobService } = createContainer(undefined, undefined, undefined, undefined, publisher);
+    const job = await jobService.create("metrics-user", { topic: "Метрики опубликованного ролика", productImageFileId, platforms: ["youtube"] });
+    await jobService.produce("metrics-user", job.id);
+    await jobService.publish("metrics-user", job.id);
+
+    const refreshed = await jobService.refreshMetrics("metrics-user", job.id);
+    expect(refreshed.publications[0]?.metrics).toMatchObject({ views: 125, likes: 9, comments: 3 });
+  });
+
   it("does not persist HeyGen integrated TTS control URIs as files", async () => {
     const media: MediaPipeline = {
       synthesizeSpeech: async () => "heygen://tts/integrated",

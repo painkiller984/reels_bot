@@ -16,5 +16,6 @@ describe("YouTube OAuth", () => {
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("include_granted_scopes")).toBe("true");
     expect(url.searchParams.get("scope")).toContain("https://www.googleapis.com/auth/youtube.upload");
+    expect(url.searchParams.get("scope")).toContain("https://www.googleapis.com/auth/youtube.readonly");
   });
 });

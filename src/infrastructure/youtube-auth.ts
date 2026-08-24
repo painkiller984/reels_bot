@@ -4,6 +4,8 @@ import { google, type Auth } from "googleapis";
 import type { YoutubeTokenStore } from "./youtube-token-store.js";
 
 const youtubeUploadScope = "https://www.googleapis.com/auth/youtube.upload";
+const youtubeReadonlyScope = "https://www.googleapis.com/auth/youtube.readonly";
+const requiredYoutubeScopes = [youtubeUploadScope, youtubeReadonlyScope];
 
 export interface YoutubeAuthOptions {
   clientId: string;
@@ -26,7 +28,7 @@ export class YoutubeAuthService {
       access_type: "offline",
       prompt: "consent",
       include_granted_scopes: true,
-      scope: [youtubeUploadScope],
+      scope: requiredYoutubeScopes,
       state,
     });
   }
@@ -41,7 +43,7 @@ export class YoutubeAuthService {
     });
     const accessToken = await client.getAccessToken();
     if (!accessToken.token) throw new Error("Google не выдал токен доступа. Переподключите YouTube через /connect_youtube.");
-    await this.assertUploadScope(client, accessToken.token);
+    await this.assertRequiredScopes(client, accessToken.token);
     return client;
   }
 
@@ -73,12 +75,12 @@ export class YoutubeAuthService {
       const client = this.client();
       const { tokens } = await client.getToken(code);
       if (!tokens.access_token) throw new Error("Google не вернул access token");
-      const tokenInfo = await this.assertUploadScope(client, tokens.access_token);
+      const tokenInfo = await this.assertRequiredScopes(client, tokens.access_token);
       tokens.scope = tokenInfo.scopes.join(" ");
       stage = "token_storage";
       await this.options.tokenStore.set(pending.userId, tokens);
       this.pending.delete(state!);
-      response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end("<h2>YouTube успешно подключён.</h2><p>Вернитесь в Telegram и создайте ролик.</p>");
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end("<h2>YouTube успешно подключён.</h2><p>Загрузка роликов и чтение метрик разрешены. Вернитесь в Telegram.</p>");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(JSON.stringify({ event: "youtube_oauth_callback_failed", stage, message }));
@@ -86,10 +88,11 @@ export class YoutubeAuthService {
     }
   }
 
-  private async assertUploadScope(client: Auth.OAuth2Client, accessToken: string) {
+  private async assertRequiredScopes(client: Auth.OAuth2Client, accessToken: string) {
     const tokenInfo = await client.getTokenInfo(accessToken);
-    if (!tokenInfo.scopes.includes(youtubeUploadScope)) {
-      throw new Error("Google не предоставил разрешение youtube.upload. Удалите старую связь приложения в аккаунте Google и выполните /connect_youtube заново.");
+    const missingScopes = requiredYoutubeScopes.filter((scope) => !tokenInfo.scopes.includes(scope));
+    if (missingScopes.length > 0) {
+      throw new Error("Google не предоставил разрешения на загрузку и чтение метрик YouTube. Выполните /connect_youtube заново и подтвердите все разрешения.");
     }
     return tokenInfo;
   }

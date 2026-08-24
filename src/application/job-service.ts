@@ -137,6 +137,33 @@ export class JobService {
     return this.jobs.listByUser(userId);
   }
 
+  async refreshMetrics(userId: string, id: string): Promise<ContentJob> {
+    const job = await this.ownedJob(userId, id);
+    let changed = false;
+    for (const publication of job.publications) {
+      if (publication.status !== "published" || !publication.externalId) continue;
+      try {
+        const metrics = await this.publisher.getMetrics(userId, publication.platform, publication.externalId);
+        if (metrics) {
+          publication.metrics = metrics;
+          changed = true;
+        }
+      } catch (error) {
+        console.warn(JSON.stringify({
+          event: "publication_metrics_refresh_failed",
+          jobId: job.id,
+          platform: publication.platform,
+          error: error instanceof Error ? error.message.slice(0, 500) : String(error),
+        }));
+      }
+    }
+    if (changed) {
+      job.updatedAt = new Date();
+      await this.jobs.save(job);
+    }
+    return job;
+  }
+
   async fail(userId: string, id: string, error: unknown): Promise<ContentJob> {
     const job = await this.ownedJob(userId, id);
     job.error = error instanceof Error ? error.message : String(error);
