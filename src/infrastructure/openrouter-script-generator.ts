@@ -37,7 +37,7 @@ export const scriptJsonSchema = {
     properties: {
       hook: { type: "string", minLength: 1, description: "Короткий хук без приветствия" },
       body: { type: "string", minLength: 1, description: "Основная часть сценария" },
-      callToAction: { type: "string", minLength: 1, description: "Призыв к действию" },
+      callToAction: { type: "string", minLength: 0, description: "Явный призыв к действию или пустая строка" },
       montagePlan: {
         type: "object",
         properties: {
@@ -116,8 +116,7 @@ export function parseScriptResponse(text: string, durationSec: number): Script {
 export function createFallbackScript(brief: Brief): Script {
   const topic = brief.topic.replace(/\s+/gu, " ").trim().replace(/[.!?]+$/u, "").slice(0, 60);
   const suppliedCallToAction = brief.callToAction?.trim().split(/\s+/u).slice(0, 12).join(" ");
-  const callToAction = suppliedCallToAction
-    || (brief.goal === "sales" ? "Посмотрите детали перед выбором." : "Сохраните ролик, чтобы не потерять.");
+  const callToAction = suppliedCallToAction ?? "";
   const bodySentences = [
     "Сначала оцените внешний вид продукта и то, насколько удобно им будет пользоваться каждый день.",
     "Обратите внимание на основные функции, материалы и детали, которые важны именно для вашей задачи.",
@@ -269,7 +268,7 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
                 "purpose=reference_scene означает новый цельный кадр по исходному изображению: опиши в prompt любую уместную сцену, ракурс, окружение и действие — не обязательно человека или руки. " +
                 "Сохраняй узнаваемость, форму, цвет, упаковку и логотип физического объекта. Интерфейсы, скриншоты и мелкий текст не перерисовывай: показывай исходник через обычные product-сцены. " +
                 (brief.sourceVideoFileId
-                  ? "В этом задании визуальная основа — присланное пользователем исходное видео. Сценарий должен быть комментарием/обзором именно этого материала; не выдумывай продукт и не предлагай AI-фоны. Монтажный план опиши как темп исходного видео и позицию говорящего аватара. "
+                  ? "В этом задании визуальная основа — присланное пользователем исходное видео. Сценарий должен быть комментарием/обзором именно оставленного фрагмента видео; не выдумывай продукт и не предлагай AI-фоны. Монтажный план опиши как темп исходного видео и позицию говорящего аватара. Если в брифе нет callToAction, верни пустую строку в callToAction и закончи body естественным выводом по последнему показанному кадру. "
                   : "Для generated_scene укажи соответствующий generated_N в background. Хотя бы одна сцена обязана показывать исходник без генеративного изменения. ") +
                 "creativeSeed используй как источник вариативности. Не добавляй Markdown и пояснения.",
             },

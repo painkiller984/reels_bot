@@ -64,7 +64,7 @@ describe("OpenRouter script safety", () => {
       avatarMode: "generated",
     });
     expect(script.hook).toContain("Обзор приложения");
-    expect(script.callToAction.length).toBeGreaterThan(10);
+    expect(script.callToAction).toBe("");
     expect(script.montagePlan?.scenes.length).toBeGreaterThanOrEqual(4);
   });
 

@@ -21,6 +21,7 @@ type JobAction = "status" | "preview" | "publish" | "retry" | "cancel";
 
 const argumentOf = (text: string | undefined): string => text?.replace(/^\/\w+(?:@\w+)?\s*/, "").trim() ?? "";
 const userIdOf = (ctx: Context): string => String(ctx.from?.id ?? ctx.chat?.id ?? (() => { throw new Error("Не удалось определить пользователя Telegram"); })());
+const outputDurationFor = (sourceDuration: number): number => Math.min(180, Math.floor(sourceDuration / 5) * 5);
 const briefKeyboard = () => new InlineKeyboard().text("Создать ролик", "brief:confirm").text("Отмена", "brief:cancel");
 
 function avatarKeyboard(label: string): InlineKeyboard {
@@ -90,14 +91,15 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
   const acceptVideo = async (ctx: Context, fileId: string, duration: number | undefined): Promise<void> => {
     const draft = await drafts.get(userIdOf(ctx));
     if (!draft || draft.stage !== "source_video") return void await ctx.reply("Сначала запустите /create.");
-    if ((duration ?? 10) < 10) return void await ctx.reply("Исходное видео должно быть не короче 10 секунд.");
-    const safeDuration = Math.max(10, Math.min(180, duration ?? 30));
+    if ((duration ?? 0) < 10) return void await ctx.reply("Исходное видео должно быть не короче 10 секунд.");
+    const safeDuration = outputDurationFor(duration!);
     if (draft.topic) {
       await drafts.update(userIdOf(ctx), { sourceVideoFileId: fileId, sourceVideoDurationSec: safeDuration });
+      await ctx.reply(`Принят фрагмент первых ${safeDuration} сек исходного видео.`);
       await showAvatarChoice(ctx);
     } else {
       await drafts.update(userIdOf(ctx), { sourceVideoFileId: fileId, sourceVideoDurationSec: safeDuration, stage: "topic" });
-      await ctx.reply("Шаг 2/3. Одним сообщением напишите, что именно должен объяснить или обозреть аватар в этом ролике.");
+      await ctx.reply(`Принят фрагмент первых ${safeDuration} сек. Шаг 2/3. Одним сообщением напишите, что именно должен объяснить или обозреть аватар в этом ролике.`);
     }
   };
   bot.on("message:video", (ctx) => acceptVideo(ctx, ctx.message.video.file_id, ctx.message.video.duration));

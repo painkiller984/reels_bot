@@ -22,7 +22,9 @@ export class TelegramVideoContextProvider implements VideoContextProvider {
   async frames(fileId: string, durationSec: number): Promise<string[]> {
     const directory = resolve(this.options.scratchDir, `context-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
     const source = resolve(directory, "source.mp4");
-    const frameCount = Math.max(3, Math.min(8, this.options.frameCount ?? 6));
+    // About one frame per 2.5 seconds: 10 sec -> 4 frames, 15 -> 6,
+    // 20 -> 8. The duration is the output duration, never the discarded tail.
+    const frameCount = Math.max(4, Math.min(12, this.options.frameCount ?? Math.ceil(durationSec / 2.5)));
     try {
       await mkdir(directory, { recursive: true });
       await this.options.telegramFiles.download(fileId, source);

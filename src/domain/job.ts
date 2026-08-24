@@ -113,7 +113,9 @@ export function createFallbackMontagePlan(brief: Brief): MontagePlan {
 export const ScriptSchema = z.object({
   hook: z.string().min(1),
   body: z.string().min(1),
-  callToAction: z.string().min(1),
+  // A CTA is optional: a commentary may simply conclude with the final
+  // retained part of the source video.
+  callToAction: z.string().max(500).default(""),
   montagePlan: MontagePlanSchema.optional(),
 });
 export type Script = z.infer<typeof ScriptSchema>;
