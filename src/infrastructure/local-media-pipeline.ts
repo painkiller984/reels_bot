@@ -42,6 +42,7 @@ export interface LocalMediaOptions {
   speechSynthesizer?: SpeechSynthesizer;
   avatarGenerator?: AvatarGenerator;
   downloadTelegramImage?: (fileId: string, destination: string) => Promise<string>;
+  downloadTelegramVideo?: (fileId: string, destination: string) => Promise<string>;
   downloadBackgroundMusic?: (query: string, destination: string) => Promise<string>;
   brollBackgroundGenerator?: BrollBackgroundGenerator;
   avatarHandlesSpeech?: boolean;
@@ -125,6 +126,12 @@ export class LocalMediaPipeline implements MediaPipeline {
       : this.createSrt(job);
     await writeFile(captions, this.normalizeSrt(captionsSource), "utf8");
     const subtitlePath = captions.replace(/\\/g, "/").replace(":", "\\:").replace(/'/g, "\\'");
+    if (job.brief.sourceVideoFileId && this.options.downloadTelegramVideo) {
+      const source = resolve(directory, "source.mp4");
+      await this.options.downloadTelegramVideo(job.brief.sourceVideoFileId, source);
+      await this.renderSourceVideoWithAvatar({ source, avatarUri, output, captions: subtitlePath, targetDuration, job });
+      return output;
+    }
     const montagePlan = job.script?.montagePlan ?? createFallbackMontagePlan(job.brief);
     const subtitleStyle = this.subtitleStyle(montagePlan);
     const musicFile = resolve(directory, "music.mp3");
@@ -242,9 +249,9 @@ export class LocalMediaPipeline implements MediaPipeline {
       audioLevelReasonable: Number.isFinite(meanVolume) && meanVolume >= -30 && meanVolume <= -8,
       trailingSilenceReasonable: trailingSilence <= 1.2,
       blackFramesReasonable: blackDuration <= Math.max(1, duration * 0.1),
-      montageLayoutsVaried: new Set(montagePlan.scenes.map((scene) => scene.kind)).size >= 2,
-      montageMotionsVaried: new Set(montagePlan.scenes.map((scene) => scene.motion)).size >= 2,
-      montageTransitionsVaried: new Set(montagePlan.scenes.map((scene) => scene.transition)).size >= 2,
+      montageLayoutsVaried: job.brief.sourceVideoFileId ? true : new Set(montagePlan.scenes.map((scene) => scene.kind)).size >= 2,
+      montageMotionsVaried: job.brief.sourceVideoFileId ? true : new Set(montagePlan.scenes.map((scene) => scene.motion)).size >= 2,
+      montageTransitionsVaried: job.brief.sourceVideoFileId ? true : new Set(montagePlan.scenes.map((scene) => scene.transition)).size >= 2,
     };
     const passed = Object.values(checks).every(Boolean);
     const generatedVisualCount = (await readdir(dirname(renderUri)))
@@ -266,7 +273,7 @@ export class LocalMediaPipeline implements MediaPipeline {
         trailingSilenceSec: trailingSilence,
         blackDurationSec: blackDuration,
         productImageCount: productImageIds(job.brief).length,
-        montageTemplate: job.script?.montagePlan ? `ai-director-${job.script.montagePlan.style}` : "dynamic-fallback",
+        montageTemplate: job.brief.sourceVideoFileId ? "source-video-avatar-overlay" : job.script?.montagePlan ? `ai-director-${job.script.montagePlan.style}` : "dynamic-fallback",
         montageSceneCount: job.script?.montagePlan?.scenes.length ?? createFallbackMontagePlan(job.brief).scenes.length,
         aiGeneratedVisualCount: generatedVisualCount,
         imageGenerationModel: this.options.brollBackgroundGenerator?.model,
@@ -309,6 +316,50 @@ export class LocalMediaPipeline implements MediaPipeline {
     } catch {
       return 0;
     }
+  }
+
+  private async renderSourceVideoWithAvatar(input: {
+    source: string;
+    avatarUri: string;
+    output: string;
+    captions: string;
+    targetDuration: number;
+    job: ContentJob;
+  }): Promise<void> {
+    const width = this.options.outputWidth ?? 720;
+    const height = this.options.outputHeight ?? 1280;
+    const sourceDuration = await this.mediaDuration(input.source);
+    const avatarDuration = await this.mediaDuration(input.avatarUri);
+    const duration = Math.max(10, Math.min(input.targetDuration, sourceDuration || input.targetDuration, avatarDuration || input.targetDuration));
+    const avatarSize = Math.round(Math.min(width, height) * 0.29);
+    const position = this.avatarOverlayPosition(input.job, width, height, avatarSize);
+    const subtitleStyle = `FontName=Arial,FontSize=11,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment=${position.top ? 2 : 8},MarginL=76,MarginR=76,MarginV=62`;
+    const graph = [
+      `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=18:4,eq=brightness=-0.18[bg]`,
+      `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,setsar=1[main]`,
+      `[bg][main]overlay=(W-w)/2:(H-h)/2[base]`,
+      `[1:v]crop='min(iw,ih)':'min(iw,ih)':'(iw-min(iw,ih))/2':'(ih-min(iw,ih))/2',scale=${avatarSize}:${avatarSize},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte((X-W/2)^2+(Y-H/2)^2,(W/2-5)^2),255,0)'[avatar]`,
+      `[base][avatar]overlay=${position.x}:${position.y},subtitles='${input.captions}':force_style='${subtitleStyle}'[outv]`,
+      `[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,atrim=duration=${duration},apad=whole_dur=${duration}[outa]`,
+    ].join(";");
+    await this.ffmpeg([
+      "-y", "-filter_complex_threads", "1", "-i", input.source, "-i", input.avatarUri,
+      "-filter_complex", graph, "-map", "[outv]", "-map", "[outa]", "-t", String(duration),
+      "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", input.output,
+    ]);
+  }
+
+  private avatarOverlayPosition(job: ContentJob, width: number, height: number, size: number): { x: number; y: number; top: boolean } {
+    const seed = job.brief.creativeSeed ?? [...job.id].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+    const margin = 34;
+    const choices = [
+      { x: margin, y: height - size - 190, top: false },
+      { x: width - size - margin, y: height - size - 190, top: false },
+      { x: margin, y: 105, top: true },
+      { x: width - size - margin, y: 105, top: true },
+    ];
+    return choices[seed % choices.length]!;
   }
 
   private async renderStagedMontage(input: {

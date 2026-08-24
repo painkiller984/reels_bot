@@ -36,3 +36,17 @@ model OAuthCredential {
   @@unique([provider, userId])
   @@map("oauth_credentials")
 }
+
+model AvatarProfile {
+  id            String   @id @default(uuid())
+  userId        String   @db.VarChar(64)
+  heygenAvatarId String  @db.VarChar(128)
+  name          String   @db.VarChar(80)
+  sourceFileId  String?  @db.VarChar(256)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, heygenAvatarId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("avatar_profiles")
+}

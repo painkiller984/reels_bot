@@ -1,21 +1,17 @@
-import type { Brief, Platform } from "../domain/job.js";
+import type { Platform } from "../domain/job.js";
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 
-export type DraftStage = "topic" | "product_image" | "avatar_mode" | "avatar_prompt" | "avatar_image" | "goal" | "audience" | "tone" | "duration" | "platforms" | "cta" | "confirm";
+export type DraftStage = "source_video" | "topic" | "avatar" | "avatar_image" | "confirm";
 
 export interface BriefDraft {
   stage: DraftStage;
   topic?: string;
-  goal?: Brief["goal"];
-  audience?: string;
-  tone?: string;
-  durationSec?: number;
   platforms?: Platform[];
-  callToAction?: string;
-  productImageFileId?: string;
-  productImageFileIds?: string[];
-  avatarMode?: "generated" | "photo";
-  avatarPrompt?: string;
+  sourceVideoFileId?: string;
+  sourceVideoDurationSec?: number;
+  avatarMode?: "generated" | "photo" | "saved";
+  avatarId?: string;
+  avatarName?: string;
   avatarImageFileId?: string;
 }
 
@@ -25,7 +21,7 @@ export class DraftStore {
   constructor(private readonly prisma?: PrismaClient) {}
 
   async start(userId: string, topic?: string): Promise<BriefDraft> {
-    const draft: BriefDraft = topic ? { stage: "product_image", topic } : { stage: "topic" };
+    const draft: BriefDraft = { stage: "source_video", ...(topic ? { topic } : {}) };
     await this.save(userId, draft);
     return draft;
   }

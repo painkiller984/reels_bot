@@ -145,6 +145,10 @@ export function createFallbackScript(brief: Brief): Script {
 
 export function normalizeMontagePlan(brief: Brief, script: Script): Script {
   const fallback = createFallbackMontagePlan(brief);
+  // Source-video mode renders the supplied clip itself. The plan still gives
+  // the LLM a useful way to think about pacing, but must not force product
+  // image scenes (there may be no product image at all).
+  if (brief.sourceVideoFileId) return { ...script, montagePlan: script.montagePlan ?? fallback };
   if (!script.montagePlan) return { ...script, montagePlan: fallback };
   const productCount = productImageIds(brief).length;
   let scenes = script.montagePlan.scenes.map((scene) => ({
@@ -239,7 +243,7 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
             {
               role: "system",
               content:
-                "Ты режиссёр коротких вертикальных рекламных видео. Верни строго JSON со сценарием и монтажным планом. " +
+                "Ты режиссёр коротких вертикальных видео. Верни строго JSON со сценарием и монтажным планом. " +
                 "Текст должен естественно звучать вслух, начинаться без приветствия, не содержать непроверяемых обещаний, " +
                 `содержать от ${Math.floor(brief.durationSec * 1.45)} до ${Math.ceil(brief.durationSec * 2.5)} слов (цель — ${requestedWords}) и быть написан на языке ${brief.language}. ` +
                 (attempt > 1 ? "Предыдущий вариант не прошёл проверку; точно соблюди объём и JSON-схему. " : "") +
@@ -248,7 +252,9 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
                 "generatedVisuals добавляй только когда конкретному моменту сценария нужен дополнительный кадр, максимум два. " +
                 "purpose=reference_scene означает новый цельный кадр по исходному изображению: опиши в prompt любую уместную сцену, ракурс, окружение и действие — не обязательно человека или руки. " +
                 "Сохраняй узнаваемость, форму, цвет, упаковку и логотип физического объекта. Интерфейсы, скриншоты и мелкий текст не перерисовывай: показывай исходник через обычные product-сцены. " +
-                "Для generated_scene укажи соответствующий generated_N в background. Хотя бы одна сцена обязана показывать исходник без генеративного изменения. " +
+                (brief.sourceVideoFileId
+                  ? "В этом задании визуальная основа — присланное пользователем исходное видео. Сценарий должен быть комментарием/обзором именно этого материала; не выдумывай продукт и не предлагай AI-фоны. Монтажный план опиши как темп исходного видео и позицию говорящего аватара. "
+                  : "Для generated_scene укажи соответствующий generated_N в background. Хотя бы одна сцена обязана показывать исходник без генеративного изменения. ") +
                 "creativeSeed используй как источник вариативности. Не добавляй Markdown и пояснения.",
             },
             {

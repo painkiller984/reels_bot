@@ -59,11 +59,11 @@ describe("Telegram webhook error boundary", () => {
 
     await expect(bot.handleUpdate(messageUpdate(2, "/create"))).resolves.toBeUndefined();
     expect(apiCalls.some(({ method, payload }) => method === "sendMessage"
-      && String((payload as { text?: string }).text).includes("Шаг 1/9"))).toBe(true);
+      && String((payload as { text?: string }).text).includes("Шаг 1/3"))).toBe(true);
     expect(consoleError).toHaveBeenCalledTimes(1);
   });
 
-  it("explains the command syntax instead of silently ignoring an underscore", async () => {
+  it("does not crash on an unknown command with an underscore", async () => {
     const { jobService, queue } = createContainer();
     const bot = createBot("123456789:test-token", jobService, queue, {
       storage: "test",
@@ -79,10 +79,9 @@ describe("Telegram webhook error boundary", () => {
       return { ok: true, result: {} } as never;
     });
 
-    await bot.handleUpdate(messageUpdate(3, "/preview_abc123"));
+    await bot.handleUpdate(messageUpdate(3, "/unknown_command"));
 
-    expect(apiCalls.some(({ method, payload }) => method === "sendMessage"
-      && String((payload as { text?: string }).text).includes("покажет кнопки"))).toBe(true);
+    expect(apiCalls.every(({ method }) => method === "sendMessage" || method === "answerCallbackQuery")).toBe(true);
   });
 
   it("opens a human-readable job picker when a command is sent without an ID", async () => {

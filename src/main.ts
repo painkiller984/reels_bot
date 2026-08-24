@@ -29,6 +29,7 @@ import { HeyGenMusicClient } from "./infrastructure/heygen-music-client.js";
 import { FileYoutubeTokenStore, PrismaYoutubeTokenStore } from "./infrastructure/youtube-token-store.js";
 import { deployPrismaMigrations } from "./infrastructure/prisma-migrator.js";
 import { LocalArtifactStore, R2ArtifactStore } from "./infrastructure/artifact-store.js";
+import { PrismaAvatarProfileStore } from "./infrastructure/prisma-avatar-profile-store.js";
 
 const config = readConfig();
 const logger = pino({ level: config.LOG_LEVEL });
@@ -66,18 +67,20 @@ if (!config.TELEGRAM_BOT_TOKEN) {
     : config.TTS_PROVIDER === "openrouter"
       ? new OpenRouterTextToSpeech({ apiKey: config.OPENROUTER_API_KEY!, model: config.OPENROUTER_TTS_MODEL, voice: config.OPENROUTER_TTS_VOICE })
       : undefined;
+  const prisma = config.DATABASE_URL ? createPrismaClient(config.DATABASE_URL) : undefined;
+  const avatarProfiles = prisma ? new PrismaAvatarProfileStore(prisma) : undefined;
   const avatarGenerator = config.HEYGEN_API_KEY
     ? new HeyGenAvatarGenerator({
         apiKey: config.HEYGEN_API_KEY,
         resolution: config.HEYGEN_RESOLUTION,
         aspectRatio: config.HEYGEN_ASPECT_RATIO,
         telegramFiles,
+        ...(avatarProfiles ? { avatarProfiles } : {}),
         ...(config.HEYGEN_VOICE_ID ? { voiceId: config.HEYGEN_VOICE_ID } : {}),
         ...(config.HEYGEN_DEFAULT_AVATAR_ID ? { defaultAvatarId: config.HEYGEN_DEFAULT_AVATAR_ID } : {}),
         maxEstimatedJobCostUsd: config.HEYGEN_MAX_ESTIMATED_JOB_COST_USD,
       })
     : undefined;
-  const prisma = config.DATABASE_URL ? createPrismaClient(config.DATABASE_URL) : undefined;
   const repository = prisma ? new PrismaJobRepository(prisma) : new FileJobRepository(config.DATA_FILE);
   if (config.BROLL_PROVIDER === "openrouter" && !config.OPENROUTER_API_KEY) {
     throw new Error("OPENROUTER_API_KEY is required when BROLL_PROVIDER=openrouter");
@@ -115,6 +118,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
         ...(avatarGenerator ? { avatarGenerator } : {}),
         avatarHandlesSpeech: config.TTS_PROVIDER === "heygen",
         downloadTelegramImage: (fileId, destination) => telegramFiles.download(fileId, destination),
+        downloadTelegramVideo: (fileId, destination) => telegramFiles.download(fileId, destination),
         ...(musicClient ? { downloadBackgroundMusic: (query: string, destination: string) => musicClient.download(query, destination) } : {}),
         ...(brollBackgroundGenerator ? { brollBackgroundGenerator } : {}),
       })
@@ -171,7 +175,8 @@ if (!config.TELEGRAM_BOT_TOKEN) {
     media: config.MEDIA_MODE === "local" ? `FFmpeg + ${config.TTS_PROVIDER} TTS` : config.MEDIA_MODE,
     avatar: avatarGenerator ? "heygen" : "placeholder",
     publishing: youtube ? "youtube" : "disabled",
-  }, artifactStore, youtube, new DraftStore(prisma));
+    defaultAvatarLabel: config.HEYGEN_DEFAULT_AVATAR_LABEL,
+  }, artifactStore, youtube, new DraftStore(prisma), avatarProfiles);
   const webhookBaseUrl = config.TELEGRAM_WEBHOOK_URL ?? process.env.RENDER_EXTERNAL_URL;
   const webhookSecret = createHash("sha256").update(config.TELEGRAM_BOT_TOKEN).digest("hex");
   const telegramWebhook = webhookBaseUrl
@@ -203,7 +208,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
   }, webhookBaseUrl ? "Starting Telegram bot in webhook mode" : "Starting Telegram bot in long-polling mode");
   const commands = [
     { command: "create", description: "Создать новый ролик" },
-    { command: "done", description: "Закончить загрузку изображений" },
+    { command: "avatars", description: "Сохранённые аватары" },
     { command: "queue", description: "Показать очередь" },
     { command: "status", description: "Статус задачи" },
     { command: "preview", description: "Получить готовый MP4" },

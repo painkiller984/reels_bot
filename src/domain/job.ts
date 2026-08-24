@@ -12,18 +12,28 @@ export const BriefSchema = z.object({
   durationSec: z.number().int().min(10).max(180).default(45),
   platforms: z.array(PlatformSchema).min(1).default(["youtube"]),
   callToAction: z.string().trim().max(500).optional(),
-  productImageFileId: z.string().min(1),
+  // Legacy image-driven montage remains supported for existing jobs. New jobs
+  // use sourceVideoFileId: the video is the primary visual material.
+  productImageFileId: z.string().min(1).optional(),
   productImageFileIds: z.array(z.string().min(1)).min(1).max(6).optional(),
-  avatarMode: z.enum(["generated", "photo"]).default("generated"),
+  sourceVideoFileId: z.string().min(1).optional(),
+  sourceVideoDurationSec: z.number().int().min(10).max(180).optional(),
+  avatarMode: z.enum(["generated", "photo", "saved"]).default("generated"),
+  avatarId: z.string().min(1).optional(),
+  avatarName: z.string().trim().min(2).max(80).optional(),
   avatarPrompt: z.string().trim().min(3).max(1_000).optional(),
   avatarImageFileId: z.string().min(1).optional(),
   creativeSeed: z.number().int().min(1).max(2_147_483_647).optional(),
+}).superRefine((brief, context) => {
+  if (!brief.sourceVideoFileId && !brief.productImageFileId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Нужно исходное видео или изображение" });
+  }
 });
 
 export type Brief = z.infer<typeof BriefSchema>;
 
 export function productImageIds(brief: Brief): string[] {
-  return [...new Set([brief.productImageFileId, ...(brief.productImageFileIds ?? [])])].slice(0, 6);
+  return [...new Set([brief.productImageFileId, ...(brief.productImageFileIds ?? [])].filter((id): id is string => Boolean(id)))].slice(0, 6);
 }
 
 export const JobStatusSchema = z.enum([
@@ -74,7 +84,7 @@ export const MontagePlanSchema = z.object({
 export type MontagePlan = z.infer<typeof MontagePlanSchema>;
 
 export function createFallbackMontagePlan(brief: Brief): MontagePlan {
-  const count = productImageIds(brief).length;
+  const count = Math.max(1, productImageIds(brief).length);
   const seed = brief.creativeSeed ?? [...brief.topic].reduce((value, char) => (value * 31 + char.charCodeAt(0)) >>> 0, 17);
   const motions = ["zoom_in", "pan_left", "fly_from_bottom", "slide_right", "zoom_out", "pan_right", "pop", "fly_from_top", "pan_up", "drift", "pulse"] as const;
   const transitions = ["zoom", "whip_left", "push_up", "fade", "whip_right", "push_down", "circle", "reveal", "pixelize", "cut"] as const;

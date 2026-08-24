@@ -47,6 +47,7 @@ const ConfigSchema = z.object({
   GOOGLE_TTS_VOICE: z.string().min(1).default("ru-RU-Wavenet-D"),
   HEYGEN_API_KEY: optionalString,
   HEYGEN_DEFAULT_AVATAR_ID: optionalString,
+  HEYGEN_DEFAULT_AVATAR_LABEL: z.string().min(2).max(80).default("Основной мужской аватар"),
   HEYGEN_VOICE_ID: optionalString,
   HEYGEN_MAX_ESTIMATED_JOB_COST_USD: z.coerce.number().positive().max(100).default(3),
   HEYGEN_RESOLUTION: z.enum(["720p", "1080p"]).default("720p"),

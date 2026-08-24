@@ -6,8 +6,8 @@ describe("durable Telegram brief drafts", () => {
   it("keeps an in-memory draft across separate operations", async () => {
     const store = new DraftStore();
     await store.start("user", "Обзор телефона");
-    await store.update("user", { productImageFileId: "photo", productImageFileIds: ["photo"], stage: "avatar_mode" });
-    expect(await store.get("user")).toMatchObject({ topic: "Обзор телефона", stage: "avatar_mode" });
+    await store.update("user", { sourceVideoFileId: "video", sourceVideoDurationSec: 30, stage: "avatar" });
+    expect(await store.get("user")).toMatchObject({ topic: "Обзор телефона", stage: "avatar" });
   });
 
   it("loads a draft from PostgreSQL-compatible storage after recreating the store", async () => {
@@ -31,6 +31,6 @@ describe("durable Telegram brief drafts", () => {
 
     await new DraftStore(prisma).start("user", "Обзор приложения");
     const restored = await new DraftStore(prisma).get("user");
-    expect(restored).toEqual({ stage: "product_image", topic: "Обзор приложения" });
+    expect(restored).toEqual({ stage: "source_video", topic: "Обзор приложения" });
   });
 });

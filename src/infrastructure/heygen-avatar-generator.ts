@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { ContentJob } from "../domain/job.js";
+import type { AvatarProfileStore } from "../application/avatar-profiles.js";
 import type { AvatarGenerator } from "./local-media-pipeline.js";
 import { TelegramFileClient } from "./telegram-file-client.js";
 
@@ -15,6 +16,7 @@ export interface HeyGenAvatarOptions {
   voiceId?: string;
   maxEstimatedJobCostUsd: number;
   telegramFiles: TelegramFileClient;
+  avatarProfiles?: AvatarProfileStore;
 }
 
 export class HeyGenAvatarGenerator implements AvatarGenerator {
@@ -28,9 +30,9 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
         `HeyGen safety limit: estimated $${estimatedCostUsd.toFixed(2)} exceeds $${this.options.maxEstimatedJobCostUsd.toFixed(2)}`,
       );
     }
-    const avatarId = job.brief.avatarImageFileId
+    const avatarId = job.brief.avatarId ?? (job.brief.avatarImageFileId
       ? await this.createPhotoAvatar(job, dirname(outputFile))
-      : await this.createGeneratedAvatar(job);
+      : await this.createGeneratedAvatar(job));
     const usesIntegratedVoice = audioFile.startsWith("heygen://");
     const audioAssetId = usesIntegratedVoice ? undefined : await this.uploadAsset(audioFile, "audio/mpeg");
     const narration = [job.script?.hook, job.script?.body, job.script?.callToAction].filter(Boolean).join(" ");
@@ -79,7 +81,14 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
         file: { type: "asset_id", asset_id: imageAssetId },
       }),
     });
-    return this.resolveCreatedAvatar(result);
+    const avatarId = await this.resolveCreatedAvatar(result);
+    await this.options.avatarProfiles?.create({
+      userId: job.userId,
+      heygenAvatarId: avatarId,
+      name: job.brief.avatarName ?? `Аватар ${job.id}`,
+      sourceFileId: job.brief.avatarImageFileId,
+    });
+    return avatarId;
   }
 
   private async createGeneratedAvatar(job: ContentJob): Promise<string> {
