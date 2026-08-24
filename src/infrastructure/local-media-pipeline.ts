@@ -234,10 +234,12 @@ export class LocalMediaPipeline implements MediaPipeline {
       : 0;
     const frameRate = this.frameRate(video?.r_frame_rate);
     const montagePlan = job.script?.montagePlan ?? createFallbackMontagePlan(job.brief);
+    const expectedWidth = this.options.outputWidth ?? 720;
+    const expectedHeight = this.options.outputHeight ?? 1280;
     const checks = {
       hasVideo: Boolean(video),
       hasAudio: Boolean(audio),
-      verticalVideo: Boolean(video?.width && video.height && video.height > video.width && video.width >= (this.options.outputWidth ?? 720)),
+      verticalVideo: video?.width === expectedWidth && video.height === expectedHeight,
       codecsSupported: video?.codec_name === "h264" && audio?.codec_name === "aac",
       frameRateReasonable: frameRate >= 24 && frameRate <= 60,
       durationReasonable: duration >= Math.max(5, job.brief.durationSec * 0.65)
@@ -263,6 +265,9 @@ export class LocalMediaPipeline implements MediaPipeline {
       expectedDurationSec: job.brief.durationSec,
       diagnostics: {
         videoCodec: video?.codec_name,
+        videoWidth: video?.width,
+        videoHeight: video?.height,
+        videoAspectRatio: video?.width && video.height ? Number((video.width / video.height).toFixed(4)) : undefined,
         audioCodec: audio?.codec_name,
         frameRate,
         audioSampleRate: audio?.sample_rate,
