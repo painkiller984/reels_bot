@@ -35,6 +35,7 @@ export const scriptJsonSchema = {
   schema: {
     type: "object",
     properties: {
+      title: { type: "string", minLength: 3, maxLength: 100, description: "Короткое название ролика по фактическому содержанию, не часть озвучки" },
       hook: { type: "string", minLength: 1, description: "Короткий хук без приветствия" },
       body: { type: "string", minLength: 1, description: "Основная часть сценария" },
       callToAction: { type: "string", minLength: 0, description: "Явный призыв к действию или пустая строка" },
@@ -83,7 +84,7 @@ export const scriptJsonSchema = {
         additionalProperties: false,
       },
     },
-    required: ["hook", "body", "callToAction", "montagePlan"],
+    required: ["title", "hook", "body", "callToAction", "montagePlan"],
     additionalProperties: false,
   },
 } as const;
@@ -94,11 +95,12 @@ export const sourceVideoScriptJsonSchema = {
   schema: {
     type: "object",
     properties: {
+      title: { type: "string", minLength: 3, maxLength: 100, description: "Короткое название по реально показанному видео; не произносится" },
       hook: { type: "string", minLength: 1, description: "Короткий хук без приветствия" },
       body: { type: "string", minLength: 1, description: "Точный обзор содержания исходного видео" },
       callToAction: { type: "string", minLength: 0, description: "Призыв из брифа или пустая строка" },
     },
-    required: ["hook", "body", "callToAction"],
+    required: ["title", "hook", "body", "callToAction"],
     additionalProperties: false,
   },
 } as const;
@@ -111,7 +113,7 @@ function spokenWordCount(script: Script): number {
     .filter(Boolean).length;
 }
 
-export function parseScriptResponse(text: string, durationSec: number): Script {
+export function parseScriptResponse(text: string, durationSec: number, sourceVideo = false): Script {
   const withoutFence = text.replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "").trim();
   const objectStart = withoutFence.indexOf("{");
   const objectEnd = withoutFence.lastIndexOf("}");
@@ -120,8 +122,11 @@ export function parseScriptResponse(text: string, durationSec: number): Script {
   const words = spokenWordCount(script);
   // HeyGen speaks roughly two Russian words per second. A much shorter script
   // produces a technically valid avatar video that fails the duration gate.
-  const minimumWords = Math.max(12, Math.floor(durationSec * 1.45));
-  const maximumWords = Math.ceil(durationSec * 2.8);
+  // Source-video narration must finish before the visual does. HeyGen voices
+  // vary slightly in pace, so source clips use a tighter speech budget and the
+  // renderer still keeps a safety tail after the final word.
+  const minimumWords = Math.max(12, Math.floor(durationSec * (sourceVideo ? 1.25 : 1.45)));
+  const maximumWords = Math.ceil(durationSec * (sourceVideo ? 1.9 : 2.8));
   if (words < minimumWords || words > maximumWords) {
     throw new Error(`OpenRouter script length is unsuitable: ${words} words for ${durationSec} seconds`);
   }
@@ -152,6 +157,7 @@ export function createFallbackScript(brief: Brief): Script {
     wordCount += sentence.split(/\s+/u).length;
   }
   return ScriptSchema.parse({
+    title: topic.slice(0, 100),
     hook,
     body: selectedBody.join(" "),
     callToAction,
@@ -228,13 +234,18 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
     let productImages: string[] = [];
     let videoFrames: string[] = [];
     let videoTranscript: string | undefined;
+    let chronologicalFrameCount = 0;
     if (brief.sourceVideoFileId && this.options.videoContext) {
       try {
         videoFrames = await within(
           this.options.videoContext.analyze(brief.sourceVideoFileId, brief.sourceVideoDurationSec ?? brief.durationSec),
           55_000,
           "Video context extraction",
-        ).then((analysis) => { videoTranscript = analysis.transcript; return analysis.frames; });
+        ).then((analysis) => {
+          videoTranscript = analysis.transcript;
+          chronologicalFrameCount = analysis.chronologicalFrameCount ?? analysis.frames.length;
+          return analysis.frames;
+        });
       } catch (error) {
         console.warn(JSON.stringify({ event: "script_video_context_unavailable", message: error instanceof Error ? error.message.slice(0, 300) : "unknown error" }));
         if (this.options.allowFallback === false) throw new Error(`Не удалось проанализировать исходное видео до создания сценария: ${error instanceof Error ? error.message : String(error)}`);
@@ -259,7 +270,7 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
         }
       }
     }
-    const requestedWords = Math.max(15, Math.round(brief.durationSec * 2.05));
+    const requestedWords = Math.max(15, Math.round(brief.durationSec * (brief.sourceVideoFileId ? 1.65 : 2.05)));
     const maxAttempts = this.options.maxAttempts ?? 3;
     const requestTimeoutMs = this.options.requestTimeoutMs ?? 12_000;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -276,9 +287,10 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
             {
               role: "system",
               content:
-                `Ты сценарист коротких вертикальных видео. Верни строго JSON ${brief.sourceVideoFileId ? "только со сценарием обзора" : "со сценарием и монтажным планом"}. ` +
+                `Ты сценарист коротких вертикальных видео. Верни строго JSON ${brief.sourceVideoFileId ? "со служебным названием и сценарием обзора" : "со служебным названием, сценарием и монтажным планом"}. ` +
+                "Поле title — короткое естественное название из 4–8 слов по фактическому содержанию ролика. Оно используется только как метаданные, не входит в озвучку. Пользовательский topic — инструкция и угол для сценария, не готовое название. " +
                 "Текст должен естественно звучать вслух, начинаться без приветствия, не содержать непроверяемых обещаний, " +
-                `содержать от ${Math.floor(brief.durationSec * 1.45)} до ${Math.ceil(brief.durationSec * 2.5)} слов (цель — ${requestedWords}) и быть написан на языке ${brief.language}. ` +
+                `содержать от ${Math.floor(brief.durationSec * (brief.sourceVideoFileId ? 1.25 : 1.45))} до ${Math.ceil(brief.durationSec * (brief.sourceVideoFileId ? 1.9 : 2.5))} слов (цель — ${requestedWords}) и быть написан на языке ${brief.language}. ` +
                 (attempt > 1 ? "Предыдущий вариант не прошёл проверку; точно соблюди объём и JSON-схему. " : "") +
                 (brief.sourceVideoFileId
                   ? "Визуальная основа — всё присланное пользователем видео. Сценарий должен быть комментарием/обзором именно показанного и сказанного; не выдумывай продукт, не создавай монтажный план, сцены или AI-фоны. Если в брифе есть callToAction, сохрани его смысл и поставь в конце; если его нет, верни пустую строку и закончи body естественным выводом по финалу видео. "
@@ -290,7 +302,7 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
               content: productImages.length > 0 || videoFrames.length > 0
                 ? [
                     { type: "text", text: brief.sourceVideoFileId
-                      ? `Это ключевые кадры и расшифровка речи исходного видео. Сначала пойми, что реально показано и сказано, затем напиши точный обзор/комментарий по брифу. Не выдумывай функции, предметы или события, которых нет в кадрах или расшифровке. Тема задаёт угол обзора. Расшифровка: ${videoTranscript ?? "В исходном видео не обнаружена речь."}. Бриф: ${JSON.stringify(brief)}`
+                      ? `Это ключевые кадры и расшифровка речи исходного видео. Количество последовательных кадров от начала к концу: ${chronologicalFrameCount}; остальные изображения — дополнительные кадры смен сцен и не продолжают хронологию. Сначала пойми, что реально показано и сказано, затем напиши точный обзор/комментарий по брифу. Не выдумывай функции, предметы или события, которых нет в кадрах или расшифровке. Пользовательское задание задаёт угол и требования сценария, но не название. Расшифровка: ${videoTranscript ?? "В исходном видео не обнаружена речь."}. Бриф: ${JSON.stringify(brief)}`
                       : `Распознай объект ролика по всем исходным изображениям и создай единый сценарий и уникальную режиссуру по брифу: ${JSON.stringify(brief)}` },
                     ...videoFrames.map((frame) => ({ type: "image_url" as const, image_url: { url: frame } })),
                     ...productImages.map((productImage) => ({ type: "image_url" as const, image_url: { url: productImage } })),
@@ -301,7 +313,7 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
         } as never), requestTimeoutMs, "OpenRouter script generation");
         const text = response.choices[0]?.message.content;
         if (!text) throw new Error("OpenRouter did not return a script");
-        return normalizeMontagePlan(brief, parseScriptResponse(text, brief.durationSec));
+        return normalizeMontagePlan(brief, parseScriptResponse(text, brief.durationSec, Boolean(brief.sourceVideoFileId)));
       } catch (error) {
         if (attempt === maxAttempts) {
           if (this.options.allowFallback !== false) return createFallbackScript(brief);

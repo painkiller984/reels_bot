@@ -8,14 +8,15 @@ describe("OpenRouter script safety", () => {
   it("sends extracted source-video frames to the model before writing a review", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({
+        title: "Что изменилось в новом смартфоне",
         hook: "Новая модель сразу заметна в кадре.",
-        body: "На видео видны корпус, экран и камера устройства. Разберём, что меняется в этой модели и кому такой формат будет полезен каждый день.",
+        body: "На видео видны корпус, экран и камера. Разберём, что изменилось и кому новая модель будет полезна каждый день.",
         callToAction: "Смотрите обзор до конца.",
       }) } }],
     }), { status: 200, headers: { "content-type": "application/json" } }));
     const generator = new OpenRouterScriptGenerator({
       apiKey: "test", model: "test", allowFallback: false,
-      videoContext: { analyze: vi.fn().mockResolvedValue({ frames: ["data:image/jpeg;base64,Zmlyc3Q=", "data:image/jpeg;base64,c2Vjb25k", "data:image/jpeg;base64,dGhpcmQ="], transcript: "В кадре показан смартфон." }) },
+      videoContext: { analyze: vi.fn().mockResolvedValue({ frames: ["data:image/jpeg;base64,Zmlyc3Q=", "data:image/jpeg;base64,c2Vjb25k", "data:image/jpeg;base64,dGhpcmQ="], chronologicalFrameCount: 2, transcript: "В кадре показан смартфон." }) },
     });
     const script = await generator.generate({
       topic: "Обзор новой модели смартфона", goal: "education", audience: "покупатели", tone: "живой", language: "ru",
@@ -25,7 +26,10 @@ describe("OpenRouter script safety", () => {
     const parts = request.messages[1].content as Array<{ type: string; image_url?: { url: string } }>;
     expect(parts.filter((part) => part.type === "image_url")).toHaveLength(3);
     expect(parts[0]?.type).toBe("text");
+    expect((parts[0] as unknown as { text: string }).text).toContain("Количество последовательных кадров от начала к концу: 2");
     expect(request.response_format.json_schema.schema.properties.montagePlan).toBeUndefined();
+    expect(request.response_format.json_schema.schema.required).toContain("title");
+    expect(script.title).toBe("Что изменилось в новом смартфоне");
     expect(script.montagePlan).toBeUndefined();
   });
 
@@ -48,6 +52,16 @@ describe("OpenRouter script safety", () => {
       15,
     );
     expect(script.hook).toBe("Смотрите внимательно.");
+  });
+
+  it("keeps a generated title separate from spoken narration", () => {
+    const script = parseScriptResponse(
+      '{"title":"Рыбы большого океанариума","hook":"Посмотрите вокруг.","body":"В прозрачном тоннеле рядом проплывают скаты, акулы и яркие рифовые рыбы, которые хорошо видны в кадре.","callToAction":""}',
+      15,
+      true,
+    );
+    expect(script.title).toBe("Рыбы большого океанариума");
+    expect([script.hook, script.body, script.callToAction].join(" ")).not.toContain(script.title!);
   });
 
   it("rejects a script that cannot fit the requested duration", () => {

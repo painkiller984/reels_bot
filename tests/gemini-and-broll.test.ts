@@ -27,6 +27,7 @@ describe("Gemini and generated B-roll", () => {
   it("uses Gemini structured output for a duration-safe script", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       candidates: [{ content: { parts: [{ text: JSON.stringify({
+        title: "Как выбрать свежий огурец",
         hook: "Свежесть видно сразу.",
         body: "Хрустящий огурец подходит для салатов и лёгких домашних закусок каждый день, сохраняя свежий вкус и приятную текстуру.",
         callToAction: "Выберите свежий продукт сегодня.",
@@ -37,9 +38,11 @@ describe("Gemini and generated B-roll", () => {
     const script = await generator.generate(brief);
 
     expect(script.hook).toBe("Свежесть видно сразу.");
+    expect(script.title).toBe("Как выбрать свежий огурец");
     expect(fetchMock.mock.calls[0]?.[0]).toContain("gemini-3.5-flash-lite");
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.generationConfig.responseMimeType).toBe("application/json");
+    expect(request.generationConfig.responseJsonSchema.required).toContain("title");
   });
 
   it("generates backgrounds without sending the real product for alteration", async () => {

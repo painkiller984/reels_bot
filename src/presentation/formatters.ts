@@ -17,12 +17,14 @@ export const statusLabels: Record<JobStatus, string> = {
   cancelled: "Отменён",
 };
 
-export function jobTitle(job: ContentJob): string {
-  const title = job.brief.topic
+export function jobTitle(job: ContentJob, maxLength = 52): string {
+  const title = (job.script?.title ?? job.brief.topic)
     .replace(/\s+/gu, " ")
     .replace(/^[\s.,:;!?—–-]+|[\s.,:;!?—–-]+$/gu, "")
     .trim();
-  return title.length > 52 ? `${title.slice(0, 49).trimEnd()}…` : title || "Без названия";
+  if (!title) return "Без названия";
+  if (title.length <= maxLength) return title;
+  return `${title.slice(0, Math.max(1, maxLength - 3)).trimEnd()}…`;
 }
 
 export function formatJob(job: ContentJob): string {

@@ -35,6 +35,19 @@ interface SubtitleCue {
   text: string;
 }
 
+export const SOURCE_VIDEO_AVATAR_SCALE = 0.435;
+export const SOURCE_VIDEO_NARRATION_TAIL_SEC = 0.5;
+
+export function sourceVideoTimeline(sourceDuration: number, avatarDuration: number, targetDuration: number): {
+  duration: number;
+  sourceExtension: number;
+} {
+  const safeSourceDuration = sourceDuration || targetDuration;
+  const safeAvatarDuration = avatarDuration || targetDuration;
+  const duration = Math.max(10, safeSourceDuration, safeAvatarDuration + SOURCE_VIDEO_NARRATION_TAIL_SEC);
+  return { duration, sourceExtension: Math.max(0, duration - safeSourceDuration) };
+}
+
 export interface LocalMediaOptions {
   artifactsDir: string;
   ffmpegPath: string;
@@ -341,10 +354,13 @@ export class LocalMediaPipeline implements MediaPipeline {
     const height = this.options.outputHeight ?? 1280;
     const sourceDuration = await this.mediaDuration(input.source);
     const avatarDuration = await this.mediaDuration(input.avatarUri);
-    const duration = Math.max(10, Math.min(input.targetDuration, sourceDuration || input.targetDuration, avatarDuration || input.targetDuration));
+    // Never cut the final word. Keep the complete source clip and, when the
+    // avatar voice runs longer, freeze the final source frame until narration
+    // plus a short natural tail has finished.
+    const { duration, sourceExtension } = sourceVideoTimeline(sourceDuration, avatarDuration, input.targetDuration);
     // The reference layout uses the same circular talking-head treatment for
     // both the built-in desk presenter and user-provided avatars.
-    const avatarSize = Math.round(Math.min(width, height) * 0.29 / 2) * 2;
+    const avatarSize = Math.round(Math.min(width, height) * SOURCE_VIDEO_AVATAR_SCALE / 2) * 2;
     const position = this.avatarOverlayPosition(input.job, width, height, avatarSize);
     // The reference format keeps captions in the visual centre. The avatar is
     // placed in a corner, so the central text stays readable and does not sit
@@ -356,9 +372,9 @@ export class LocalMediaPipeline implements MediaPipeline {
     // the circle emphasises the face instead of the torso.
     const avatarFilter = `[1:v]crop='min(iw,ih)':'min(iw,ih)':'(iw-min(iw,ih))/2':'max(0,(ih-min(iw,ih))*0.12)',scale=${avatarSize}:${avatarSize}:flags=fast_bilinear,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte((X-W/2)^2+(Y-H/2)^2,(W/2-5)^2),255,0)'[avatar]`;
     const graph = [
-      `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=${width}:${height},setsar=1[base]`,
+      `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=${width}:${height},setsar=1,tpad=stop_mode=clone:stop_duration=${sourceExtension.toFixed(3)},trim=duration=${duration.toFixed(3)}[base]`,
       avatarFilter,
-      `[base][avatar]overlay=${position.x}:${position.y}:shortest=1,subtitles='${input.captions}':force_style='${subtitleStyle}'[outv]`,
+      `[base][avatar]overlay=${position.x}:${position.y}:shortest=0:eof_action=repeat,subtitles='${input.captions}':force_style='${subtitleStyle}'[outv]`,
       `[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,atrim=duration=${duration},apad=whole_dur=${duration}[outa]`,
     ].join(";");
     await this.ffmpeg([

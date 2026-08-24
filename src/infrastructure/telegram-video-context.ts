@@ -11,7 +11,7 @@ export interface VideoContextProvider {
   analyze(fileId: string, durationSec: number): Promise<VideoAnalysis>;
 }
 
-export interface VideoAnalysis { frames: string[]; transcript?: string; }
+export interface VideoAnalysis { frames: string[]; chronologicalFrameCount?: number; transcript?: string; }
 export interface AudioTranscriber { transcribe(audioFile: string, language: string): Promise<string>; }
 
 export class TelegramVideoContextProvider implements VideoContextProvider {
@@ -44,8 +44,17 @@ export class TelegramVideoContextProvider implements VideoContextProvider {
         "-y", "-i", source, "-t", String(durationSec), "-vf", "select='gt(scene,0.22)',scale=768:-2:force_original_aspect_ratio=decrease",
         "-vsync", "vfr", "-frames:v", String(sceneCount), "-q:v", "4", resolve(directory, "scene-%02d.jpg"),
       ], { windowsHide: true, maxBuffer: 20 * 1024 * 1024, timeout: 45_000 });
-      const names = (await readdir(directory)).filter((name) => /^(?:timed|scene)-\d+\.jpg$/u.test(name)).sort();
+      const names = (await readdir(directory))
+        .filter((name) => /^(?:timed|scene)-\d+\.jpg$/u.test(name))
+        // The multimodal model receives chronological coverage first. Scene
+        // cuts are supplementary detail and must not scramble the timeline.
+        .sort((left, right) => {
+          const leftGroup = left.startsWith("timed-") ? 0 : 1;
+          const rightGroup = right.startsWith("timed-") ? 0 : 1;
+          return leftGroup - rightGroup || left.localeCompare(right, "en", { numeric: true });
+        });
       const frames = await Promise.all(names.map(async (name) => `data:image/jpeg;base64,${(await readFile(resolve(directory, name))).toString("base64")}`));
+      const chronologicalFrameCount = names.filter((name) => name.startsWith("timed-")).length;
       if (frames.length < 3) throw new Error("из видео извлечено слишком мало кадров");
       let transcript: string | undefined;
       if (this.options.transcriber) {
@@ -58,7 +67,7 @@ export class TelegramVideoContextProvider implements VideoContextProvider {
           console.warn(JSON.stringify({ event: "video_audio_transcript_unavailable", message: error instanceof Error ? error.message.slice(0, 300) : "unknown error" }));
         }
       }
-      return { frames, ...(transcript ? { transcript } : {}) };
+      return { frames, chronologicalFrameCount, ...(transcript ? { transcript } : {}) };
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

@@ -37,7 +37,7 @@ export class GeminiScriptGenerator implements ScriptGenerator {
     const productImages = this.options.telegramFiles
       ? await Promise.all(productImageIds(brief).map((fileId) => this.options.telegramFiles!.dataUrl(fileId)))
       : [];
-    const requestedWords = Math.max(15, Math.round(brief.durationSec * 2.05));
+    const requestedWords = Math.max(15, Math.round(brief.durationSec * (brief.sourceVideoFileId ? 1.65 : 2.05)));
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.options.model)}:generateContent`;
 
     for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -52,12 +52,12 @@ export class GeminiScriptGenerator implements ScriptGenerator {
               parts: [
                 {
                   text:
-                    "Ты сценарист коротких вертикальных видео. " +
+                    "Ты сценарист коротких вертикальных видео. Поле title — короткое естественное название из 4–8 слов по фактическому содержанию. Оно является только метаданными и не произносится. Пользовательский topic — инструкция для сценария, а не готовое название. " +
                     (brief.sourceVideoFileId
-                      ? `Верни только сценарий точного обзора без монтажного плана, сцен и generatedVisuals. После текста приложены ключевые кадры и расшифровка всего исходного видео. Пиши комментарий именно к показанному и сказанному материалу, не выдумывай товар, функции и события. Расшифровка: ${videoAnalysis?.transcript ?? "речь не обнаружена"}. Если в брифе есть callToAction, сохрани его смысл и поставь в конце; если его нет, верни пустую строку и закончи основной текст естественным выводом по финалу видео. `
+                      ? `Верни только сценарий точного обзора без монтажного плана, сцен и generatedVisuals. После текста приложены ключевые кадры и расшифровка всего исходного видео. Количество последовательных кадров от начала к концу: ${videoAnalysis?.chronologicalFrameCount ?? videoFrames.length}; остальные изображения являются дополнительными кадрами смен сцен и не продолжают хронологию. Пиши комментарий именно к показанному и сказанному материалу, не выдумывай товар, функции и события. Расшифровка: ${videoAnalysis?.transcript ?? "речь не обнаружена"}. Если в брифе есть callToAction, сохрани его смысл и поставь в конце; если его нет, верни пустую строку и закончи основной текст естественным выводом по финалу видео. `
                       : "Верни сценарий и уникальный монтажный план с 4–7 сценами по смыслу текста. Для каждой сцены выбери композицию, исходник, движение и переход. generatedVisuals добавляй только при необходимости, максимум два. Физический объект должен оставаться узнаваемым, интерфейсы и мелкий текст не перерисовывай. Хотя бы одна сцена показывает исходник без генеративного изменения. ") +
                     "Сценарий должен быть без приветствия и непроверяемых обещаний. " +
-                    `Язык: ${brief.language}. Строгий объём: от ${Math.floor(brief.durationSec * 1.45)} до ${Math.ceil(brief.durationSec * 2.5)} слов, цель — ${requestedWords}. ` +
+                    `Язык: ${brief.language}. Строгий объём: от ${Math.floor(brief.durationSec * (brief.sourceVideoFileId ? 1.25 : 1.45))} до ${Math.ceil(brief.durationSec * (brief.sourceVideoFileId ? 1.9 : 2.5))} слов, цель — ${requestedWords}. ` +
                     (attempt > 1 ? "Предыдущий ответ не прошёл проверку: исправь объём и сохрани факты брифа. " : "") +
                     `Бриф: ${JSON.stringify(brief)}`,
                 },
@@ -76,7 +76,7 @@ export class GeminiScriptGenerator implements ScriptGenerator {
         if (!response.ok) throw new Error(body.error?.message ?? `Gemini HTTP ${response.status}`);
         const text = body.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
         if (!text) throw new Error("Gemini не вернул сценарий");
-        return normalizeMontagePlan(brief, parseScriptResponse(text, brief.durationSec));
+        return normalizeMontagePlan(brief, parseScriptResponse(text, brief.durationSec, Boolean(brief.sourceVideoFileId)));
       } catch {
         if (attempt === 3) {
           if (this.options.allowFallback !== false) return createFallbackScript(brief);

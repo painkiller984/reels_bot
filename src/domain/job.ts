@@ -112,6 +112,9 @@ export function createFallbackMontagePlan(brief: Brief): MontagePlan {
 }
 
 export const ScriptSchema = z.object({
+  // Generated metadata title. It is never spoken by the avatar. Optional for
+  // backward compatibility with jobs created before titles were generated.
+  title: z.string().trim().min(3).max(100).optional(),
   hook: z.string().min(1),
   body: z.string().min(1),
   // A CTA is optional: a commentary may simply conclude with the final

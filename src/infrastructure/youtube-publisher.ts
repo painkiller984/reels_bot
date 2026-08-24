@@ -2,6 +2,7 @@ import { createReadStream } from "node:fs";
 import { google } from "googleapis";
 import type { ArtifactStore, SocialPublisher } from "../application/ports.js";
 import type { ContentJob, Platform } from "../domain/job.js";
+import { jobTitle } from "../presentation/formatters.js";
 import { YoutubeAuthService } from "./youtube-auth.js";
 
 function youtubeApiError(error: unknown): Error {
@@ -44,7 +45,7 @@ export class YoutubePublisher implements SocialPublisher {
       const result = await youtube.videos.insert({
         part: ["snippet", "status"],
         requestBody: {
-          snippet: { title: job.brief.topic.slice(0, 100), description: [job.script?.hook, job.script?.body, job.script?.callToAction, "#Shorts"].filter(Boolean).join("\n\n") },
+          snippet: { title: jobTitle(job, 100), description: [job.script?.hook, job.script?.body, job.script?.callToAction, "#Shorts"].filter(Boolean).join("\n\n") },
           status: { privacyStatus: this.privacyStatus, selfDeclaredMadeForKids: false },
         },
         media: { body: createReadStream(video) },

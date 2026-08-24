@@ -52,7 +52,7 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
       body: JSON.stringify({
         type: "avatar",
         avatar_id: avatarId,
-        title: job.brief.topic.slice(0, 100),
+        title: (job.script?.title ?? job.brief.topic).slice(0, 100),
         resolution: this.options.resolution,
         // Preserve the complete office/laptop composition of the built-in
         // studio look. The final reel is still rendered as 9:16 by FFmpeg;

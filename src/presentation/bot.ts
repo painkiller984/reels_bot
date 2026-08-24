@@ -58,7 +58,7 @@ function draftSummary(draft: BriefDraft, defaultAvatarLabel: string): string {
   const avatar = draft.avatarMode === "photo" ? "новый из фотографии (будет сохранён)"
     : draft.avatarMode === "saved" ? `сохранённый: ${draft.avatarName ?? "аватар"}` : defaultAvatarLabel;
   return [
-    "Проверьте задание:", `Тема: ${draft.topic}`, `Исходный ролик: принят (${draft.sourceVideoDurationSec ?? "?"} сек)`,
+    "Проверьте задание:", `Задание для сценария: ${draft.topic}`, `Исходный ролик: принят (${draft.sourceVideoDurationSec ?? "?"} сек)`,
     `Призыв к действию: ${draft.callToAction ?? "не добавлять"}`, `Аватар: ${avatar}`,
     `Голос: ${draft.avatarVoice === "female" ? "женский" : "мужской"}`,
     "Формат: исходное видео + говорящая AI-голова + субтитры", "Платформа: YouTube",

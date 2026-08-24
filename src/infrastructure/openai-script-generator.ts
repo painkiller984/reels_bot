@@ -40,6 +40,7 @@ export class OpenAiScriptGenerator implements ScriptGenerator {
             `Prompt version: ${SCRIPT_PROMPT_VERSION}. ` +
             "Ты редактор коротких вертикальных видео. Выполни три ограниченных шага: " +
             "Writer создаёт черновик, Critic оценивает его, Reviser исправляет замечания. " +
+            "В каждом сценарии создай поле title: короткое название из 4–8 слов по содержанию; title является только метаданными и не произносится. Пользовательская тема — инструкция для сценария, не готовое название. " +
             "Текст должен естественно звучать вслух, начинаться без приветствия и не содержать непроверяемых обещаний. " +
             "Верни структурированный результат на языке брифа.",
         },
@@ -62,6 +63,7 @@ export class OpenAiScriptGenerator implements ScriptGenerator {
     if (!response.output_parsed) {
       throw new Error("LLM did not return a structured script");
     }
+    if (!response.output_parsed.final.title) throw new Error("LLM did not generate a video title");
     return normalizeMontagePlan(brief, response.output_parsed.final);
   }
 }
