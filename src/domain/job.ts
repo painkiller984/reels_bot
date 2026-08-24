@@ -17,6 +17,7 @@ export const BriefSchema = z.object({
   avatarMode: z.enum(["generated", "photo"]).default("generated"),
   avatarPrompt: z.string().trim().min(3).max(1_000).optional(),
   avatarImageFileId: z.string().min(1).optional(),
+  creativeSeed: z.number().int().min(1).max(2_147_483_647).optional(),
 });
 
 export type Brief = z.infer<typeof BriefSchema>;
@@ -45,18 +46,20 @@ export const JobStatusSchema = z.enum([
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 
 export const MontageSceneSchema = z.object({
-  kind: z.enum(["product_fullscreen", "avatar_product_card", "split_product", "avatar"]),
+  kind: z.enum(["product_fullscreen", "avatar_product_card", "split_product", "generated_scene", "avatar"]),
+  beat: z.string().trim().min(3).max(160).optional(),
   productIndex: z.number().int().min(0).max(5).optional(),
   background: z.enum(["none", "generated_1", "generated_2"]).default("none"),
-  motion: z.enum(["zoom_in", "zoom_out", "pan_left", "pan_right", "fly_from_bottom", "fly_from_top", "slide_left", "slide_right", "pop", "none"]).default("none"),
-  transition: z.enum(["cut", "fade", "whip_left", "whip_right", "push_up", "push_down", "zoom"]).default("fade"),
+  motion: z.enum(["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "drift", "pulse", "fly_from_bottom", "fly_from_top", "slide_left", "slide_right", "pop", "none"]).default("none"),
+  transition: z.enum(["cut", "fade", "whip_left", "whip_right", "push_up", "push_down", "zoom", "circle", "reveal", "pixelize"]).default("fade"),
   durationWeight: z.number().int().min(1).max(5).default(2),
 });
 export type MontageScene = z.infer<typeof MontageSceneSchema>;
 
 export const GeneratedVisualRequestSchema = z.object({
   id: z.enum(["generated_1", "generated_2"]),
-  purpose: z.enum(["background", "lifestyle", "texture"]),
+  purpose: z.enum(["background", "reference_scene", "lifestyle", "texture"]),
+  productIndex: z.number().int().min(0).max(5).optional(),
   prompt: z.string().trim().min(10).max(500),
 });
 export type GeneratedVisualRequest = z.infer<typeof GeneratedVisualRequestSchema>;
@@ -72,18 +75,28 @@ export type MontagePlan = z.infer<typeof MontagePlanSchema>;
 
 export function createFallbackMontagePlan(brief: Brief): MontagePlan {
   const count = productImageIds(brief).length;
+  const seed = brief.creativeSeed ?? [...brief.topic].reduce((value, char) => (value * 31 + char.charCodeAt(0)) >>> 0, 17);
+  const motions = ["zoom_in", "pan_left", "fly_from_bottom", "slide_right", "zoom_out", "pan_right", "pop", "fly_from_top", "pan_up", "drift", "pulse"] as const;
+  const transitions = ["zoom", "whip_left", "push_up", "fade", "whip_right", "push_down", "circle", "reveal", "pixelize", "cut"] as const;
+  const offset = seed % motions.length;
+  const sceneKinds = seed % 3 === 0
+    ? ["product_fullscreen", "avatar_product_card", "split_product", "avatar_product_card", "product_fullscreen"] as const
+    : seed % 3 === 1
+      ? ["split_product", "product_fullscreen", "avatar_product_card", "avatar", "product_fullscreen"] as const
+      : ["avatar_product_card", "product_fullscreen", "split_product", "product_fullscreen", "avatar_product_card"] as const;
   return MontagePlanSchema.parse({
     style: brief.tone.toLowerCase().includes("эксперт") ? "clean" : "dynamic",
     subtitleStyle: "bold",
     musicMood: brief.goal === "sales" ? "energetic" : "modern",
     generatedVisuals: [],
-    scenes: [
-      { kind: "product_fullscreen", productIndex: 0, motion: "zoom_in", transition: "zoom", durationWeight: 2 },
-      { kind: "avatar_product_card", productIndex: 0, motion: "fly_from_bottom", transition: "whip_left", durationWeight: 3 },
-      { kind: "split_product", productIndex: Math.min(1, count - 1), motion: "slide_right", transition: "push_up", durationWeight: 2 },
-      { kind: "avatar_product_card", productIndex: Math.min(2, count - 1), motion: "pop", transition: "whip_right", durationWeight: 3 },
-      { kind: "product_fullscreen", productIndex: count - 1, motion: "zoom_out", transition: "zoom", durationWeight: 2 },
-    ],
+    scenes: sceneKinds.map((kind, index) => ({
+      kind,
+      beat: ["хук", "контекст", "ключевая мысль", "демонстрация", "призыв к действию"][index],
+      productIndex: Math.min(index % count, count - 1),
+      motion: motions[(offset + index) % motions.length],
+      transition: transitions[(offset + index * 2) % transitions.length],
+      durationWeight: 2 + ((seed + index) % 2),
+    })),
   });
 }
 

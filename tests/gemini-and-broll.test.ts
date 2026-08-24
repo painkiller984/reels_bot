@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { productImageIds, type Brief, type ContentJob } from "../src/domain/job.js";
 import { GeminiScriptGenerator } from "../src/infrastructure/gemini-script-generator.js";
 import { OpenRouterBrollBackgroundGenerator } from "../src/infrastructure/openrouter-product-image-generator.js";
+import { TelegramFileClient } from "../src/infrastructure/telegram-file-client.js";
 
 const brief: Brief = {
   topic: "Свежий огурец",
@@ -42,7 +43,7 @@ describe("Gemini and generated B-roll", () => {
   });
 
   it("generates backgrounds without sending the real product for alteration", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ data: [] }), {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ data: [] }), {
       status: 200,
       headers: { "content-type": "application/json" },
     }));
@@ -76,7 +77,7 @@ describe("Gemini and generated B-roll", () => {
   });
 
   it("never asks the paid image endpoint for more than the configured limit", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ data: [] }), {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ data: [] }), {
       status: 200,
       headers: { "content-type": "application/json" },
     }));
@@ -102,5 +103,37 @@ describe("Gemini and generated B-roll", () => {
       { id: "generated_1", purpose: "lifestyle", prompt: "Современный интерьер с чистой зоной под товар" },
     ], ".");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the selected source image as a reference only when the director requests a generated scene", async () => {
+    const telegramFiles = new TelegramFileClient("test");
+    vi.spyOn(telegramFiles, "dataUrl")
+      .mockResolvedValueOnce("data:image/jpeg;base64,b25l")
+      .mockResolvedValueOnce("data:image/jpeg;base64,dHdv");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const generator = new OpenRouterBrollBackgroundGenerator({
+      apiKey: "test",
+      model: "google/gemini-3.1-flash-lite-image",
+      imageCount: 1,
+      telegramFiles,
+    });
+    const now = new Date();
+    const job: ContentJob = {
+      id: "job", userId: "user", status: "rendering", brief, artifacts: [], publications: [], createdAt: now, updatedAt: now,
+    };
+
+    await generator.generate(job, [{
+      id: "generated_1",
+      purpose: "reference_scene",
+      productIndex: 1,
+      prompt: "Необычный макрокадр объекта в движении на контрастной городской сцене",
+    }], ".");
+
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(request.input_references).toEqual([{ type: "image_url", image_url: { url: "data:image/jpeg;base64,dHdv" } }]);
+    expect(request.prompt).toMatch(/do not default to a person holding/iu);
   });
 });

@@ -82,6 +82,38 @@ describe("Telegram webhook error boundary", () => {
     await bot.handleUpdate(messageUpdate(3, "/preview_abc123"));
 
     expect(apiCalls.some(({ method, payload }) => method === "sendMessage"
-      && String((payload as { text?: string }).text).includes("/preview abc123"))).toBe(true);
+      && String((payload as { text?: string }).text).includes("покажет кнопки"))).toBe(true);
+  });
+
+  it("opens a human-readable job picker when a command is sent without an ID", async () => {
+    const { jobService, queue } = createContainer();
+    await jobService.create("99", {
+      topic: "Динамичный обзор нового смартфона",
+      goal: "reach",
+      audience: "покупатели",
+      tone: "живой",
+      language: "ru",
+      durationSec: 15,
+      platforms: ["youtube"],
+      productImageFileId: "source-image",
+      avatarMode: "generated",
+    });
+    const bot = createBot("123456789:test-token", jobService, queue, {
+      storage: "test", scripts: "test", media: "test", avatar: "placeholder", publishing: "disabled",
+    }, new LocalArtifactStore());
+    bot.botInfo = botInfo;
+    const apiCalls: Array<{ method: string; payload: unknown }> = [];
+    bot.api.config.use(async (_previous, method, payload) => {
+      apiCalls.push({ method, payload });
+      return { ok: true, result: {} } as never;
+    });
+
+    await bot.handleUpdate(messageUpdate(4, "/status"));
+
+    const picker = apiCalls.find(({ method, payload }) => method === "sendMessage"
+      && String((payload as { text?: string }).text).includes("Выберите ролик"));
+    const keyboard = (picker?.payload as { reply_markup?: { inline_keyboard?: Array<Array<{ text: string; callback_data: string }>> } })?.reply_markup?.inline_keyboard;
+    expect(keyboard?.[0]?.[0]?.text).toContain("Динамичный обзор нового смартфона");
+    expect(keyboard?.[0]?.[0]?.callback_data).toMatch(/^job:status:/u);
   });
 });

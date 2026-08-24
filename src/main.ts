@@ -91,6 +91,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
           Math.floor(config.OPENROUTER_BROLL_MAX_COST_USD / config.OPENROUTER_IMAGE_ESTIMATED_COST_USD),
         )),
         estimatedCostPerImageUsd: config.OPENROUTER_IMAGE_ESTIMATED_COST_USD,
+        telegramFiles,
       })
     : undefined;
   const artifactStore = config.OBJECT_STORAGE === "r2"

@@ -49,14 +49,15 @@ export const scriptJsonSchema = {
           items: {
             type: "object",
             properties: {
-              kind: { type: "string", enum: ["product_fullscreen", "avatar_product_card", "split_product", "avatar"] },
+              kind: { type: "string", enum: ["product_fullscreen", "avatar_product_card", "split_product", "generated_scene", "avatar"] },
+              beat: { type: "string", minLength: 3, maxLength: 160 },
               productIndex: { type: "integer", minimum: 0, maximum: 5 },
               background: { type: "string", enum: ["none", "generated_1", "generated_2"] },
-              motion: { type: "string", enum: ["zoom_in", "zoom_out", "pan_left", "pan_right", "fly_from_bottom", "fly_from_top", "slide_left", "slide_right", "pop", "none"] },
-              transition: { type: "string", enum: ["cut", "fade", "whip_left", "whip_right", "push_up", "push_down", "zoom"] },
+              motion: { type: "string", enum: ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "drift", "pulse", "fly_from_bottom", "fly_from_top", "slide_left", "slide_right", "pop", "none"] },
+              transition: { type: "string", enum: ["cut", "fade", "whip_left", "whip_right", "push_up", "push_down", "zoom", "circle", "reveal", "pixelize"] },
               durationWeight: { type: "integer", minimum: 1, maximum: 5 },
             },
-            required: ["kind", "productIndex", "background", "motion", "transition", "durationWeight"],
+            required: ["kind", "beat", "productIndex", "background", "motion", "transition", "durationWeight"],
             additionalProperties: false,
           },
         },
@@ -67,10 +68,11 @@ export const scriptJsonSchema = {
             type: "object",
             properties: {
               id: { type: "string", enum: ["generated_1", "generated_2"] },
-              purpose: { type: "string", enum: ["background", "lifestyle", "texture"] },
+              purpose: { type: "string", enum: ["background", "reference_scene", "texture"] },
+              productIndex: { type: "integer", minimum: 0, maximum: 5 },
               prompt: { type: "string", minLength: 10, maxLength: 500 },
             },
-            required: ["id", "purpose", "prompt"],
+            required: ["id", "purpose", "productIndex", "prompt"],
             additionalProperties: false,
           },
         },
@@ -152,18 +154,38 @@ export function normalizeMontagePlan(brief: Brief, script: Script): Script {
   if (!scenes.some((scene) => scene.kind !== "avatar")) {
     scenes = [{ ...fallback.scenes[0]!, productIndex: 0 }, ...scenes.slice(1)];
   }
+  // At least one scene must show an original source asset exactly. Reference
+  // generation is creative B-roll, never the only proof of the advertised object.
+  if (!scenes.some((scene) => ["product_fullscreen", "avatar_product_card", "split_product"].includes(scene.kind))) {
+    scenes = [{ ...fallback.scenes[0]!, productIndex: 0 }, ...scenes.slice(1)];
+  }
+  if (new Set(scenes.map((scene) => scene.kind)).size < 2 && scenes.length > 1) {
+    scenes[1] = { ...fallback.scenes[1]!, productIndex: Math.min(productCount - 1, 1) };
+  }
+  if (new Set(scenes.map((scene) => scene.motion)).size < 2) {
+    scenes = scenes.map((scene, index) => ({ ...scene, motion: fallback.scenes[index % fallback.scenes.length]!.motion }));
+  }
+  if (new Set(scenes.map((scene) => scene.transition)).size < 2) {
+    scenes = scenes.map((scene, index) => ({ ...scene, transition: fallback.scenes[index % fallback.scenes.length]!.transition }));
+  }
   const requestedVisuals = [...new Map(script.montagePlan.generatedVisuals.map((visual) => [visual.id, visual])).values()].slice(0, 2);
-  const usedIds = new Set(scenes
-    .filter((scene) => scene.kind === "product_fullscreen" && scene.background !== "none")
-    .map((scene) => scene.background));
-  const generatedVisuals = requestedVisuals.filter((visual) => usedIds.has(visual.id));
+  const usedIds = new Set<"generated_1" | "generated_2">(scenes.flatMap((scene) =>
+    ["product_fullscreen", "generated_scene"].includes(scene.kind) && scene.background !== "none" ? [scene.background] : [],
+  ));
+  const generatedVisuals = requestedVisuals
+    .filter((visual) => usedIds.has(visual.id))
+    .map((visual) => ({ ...visual, productIndex: Math.min(productCount - 1, Math.max(0, visual.productIndex ?? 0)) }));
   const generatedIds = new Set(generatedVisuals.map((visual) => visual.id));
-  scenes = scenes.map((scene) => ({
-    ...scene,
-    background: scene.kind === "product_fullscreen" && scene.background !== "none" && generatedIds.has(scene.background)
-      ? scene.background
-      : "none" as const,
-  }));
+  scenes = scenes.map((scene) => {
+    const hasGeneratedVisual = scene.background !== "none" && generatedIds.has(scene.background);
+    return {
+      ...scene,
+      kind: scene.kind === "generated_scene" && !hasGeneratedVisual ? "product_fullscreen" as const : scene.kind,
+      background: ["product_fullscreen", "generated_scene"].includes(scene.kind) && hasGeneratedVisual
+        ? scene.background
+        : "none" as const,
+    };
+  });
   return { ...script, montagePlan: MontagePlanSchema.parse({ ...script.montagePlan, scenes, generatedVisuals }) };
 }
 
@@ -208,7 +230,7 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
         const strictStructuredOutput = attempt === 1;
         const response = await within(this.client.chat.completions.create({
           model: this.options.model,
-          temperature: 0.35,
+          temperature: 0.65,
           ...(strictStructuredOutput ? {
             response_format: { type: "json_schema", json_schema: scriptJsonSchema },
             provider: { require_parameters: true },
@@ -221,16 +243,19 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
                 "Текст должен естественно звучать вслух, начинаться без приветствия, не содержать непроверяемых обещаний, " +
                 `содержать от ${Math.floor(brief.durationSec * 1.45)} до ${Math.ceil(brief.durationSec * 2.5)} слов (цель — ${requestedWords}) и быть написан на языке ${brief.language}. ` +
                 (attempt > 1 ? "Предыдущий вариант не прошёл проверку; точно соблюди объём и JSON-схему. " : "") +
-                "Создай 4–7 быстрых сцен, чередуй аватара и товар, используй разные вылеты и переходы. " +
-                "generatedVisuals добавляй только когда фон действительно улучшает ролик, максимум два. " +
-                "Генерируемый кадр не должен содержать товар, упаковку, логотип, текст или вымышленный интерфейс: " +
-                "настоящий товар или скриншот будет наложен отдельно. Не добавляй Markdown и пояснения.",
+                "Создай 4–7 быстрых сцен как уникальный режиссёрский план именно для смысла этого сценария. Не повторяй фиксированную последовательность макетов. " +
+                "Для каждой сцены заполни beat — конкретный смысловой фрагмент сценария — и осознанно выбери под него композицию, исходное изображение, движение, переход и длительность; соседние сцены должны визуально отличаться. " +
+                "generatedVisuals добавляй только когда конкретному моменту сценария нужен дополнительный кадр, максимум два. " +
+                "purpose=reference_scene означает новый цельный кадр по исходному изображению: опиши в prompt любую уместную сцену, ракурс, окружение и действие — не обязательно человека или руки. " +
+                "Сохраняй узнаваемость, форму, цвет, упаковку и логотип физического объекта. Интерфейсы, скриншоты и мелкий текст не перерисовывай: показывай исходник через обычные product-сцены. " +
+                "Для generated_scene укажи соответствующий generated_N в background. Хотя бы одна сцена обязана показывать исходник без генеративного изменения. " +
+                "creativeSeed используй как источник вариативности. Не добавляй Markdown и пояснения.",
             },
             {
               role: "user",
               content: productImages.length > 0
                 ? [
-                    { type: "text", text: `Проанализируй все изображения одного продукта или приложения и создай единый сценарий по брифу: ${JSON.stringify(brief)}` },
+                    { type: "text", text: `Распознай объект ролика по всем исходным изображениям и создай единый сценарий и уникальную режиссуру по брифу: ${JSON.stringify(brief)}` },
                     ...productImages.map((productImage) => ({ type: "image_url" as const, image_url: { url: productImage } })),
                   ]
                 : JSON.stringify(brief),

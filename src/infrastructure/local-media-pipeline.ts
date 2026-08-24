@@ -152,34 +152,29 @@ export class LocalMediaPipeline implements MediaPipeline {
           generatedBackgrounds = [];
         }
       }
-      const montageImages = [...suppliedProductImages, ...generatedBackgrounds.map((background) => background.path)];
-      if ((this.options.outputWidth ?? 720) < 720) {
-        await this.renderStagedMontage({
-          avatarUri,
-          captions: subtitlePath,
-          subtitleStyle,
-          suppliedProductImages,
-          generatedBackgrounds,
-          montagePlan,
-          targetDuration,
-          ...(hasMusic ? { musicFile } : {}),
-          directory,
-          output,
-        });
-        return output;
+      const requiredGeneratedScenes = new Set<"generated_1" | "generated_2">(montagePlan.scenes.flatMap((scene) =>
+        scene.kind === "generated_scene" && scene.background !== "none" ? [scene.background] : [],
+      ));
+      const generatedIds = new Set(generatedBackgrounds.map((item) => item.id));
+      const missingGeneratedScenes = [...requiredGeneratedScenes].filter((id) => !generatedIds.has(id));
+      if (missingGeneratedScenes.length > 0) {
+        throw new Error(`Не удалось создать обязательные AI-кадры режиссёрского плана: ${missingGeneratedScenes.join(", ")}. Повторите задачу через /retry`);
       }
-      const imageInputs = montageImages.flatMap((productImage) => ["-loop", "1", "-framerate", "25", "-i", productImage]);
-      const musicInputIndex = montageImages.length + 1;
-      const musicInput = hasMusic ? ["-stream_loop", "-1", "-i", musicFile] : [];
-      const musicFilter = hasMusic
-        ? `;[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[voice];[${musicInputIndex}:a]aresample=48000,volume=0.04,afade=t=in:st=0:d=1,afade=t=out:st=${Math.max(1, targetDuration - 1)}:d=1,atrim=duration=${targetDuration}[music];[voice][music]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0,atrim=duration=${targetDuration},apad=whole_dur=${targetDuration}[outa]`
-        : `;[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=${targetDuration}[outa]`;
-      const productVideoFilter = this.productMontageFilter(suppliedProductImages.length, generatedBackgrounds, targetDuration, montagePlan);
-      await this.ffmpeg([
-        "-y", "-filter_complex_threads", "1", "-i", avatarUri, ...imageInputs, ...musicInput,
-        "-filter_complex", `${productVideoFilter.filter};${productVideoFilter.output}subtitles='${subtitlePath}':force_style='${subtitleStyle}'[outv]${musicFilter}`,
-        "-map", "[outv]", "-map", "[outa]", "-t", String(targetDuration), "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-threads", "1", "-crf", "22", "-c:a", "aac", "-shortest", "-movflags", "+faststart", output,
-      ]);
+      // Render every production resolution scene-by-scene. This makes the LLM
+      // plan authoritative and enables real transitions instead of one static
+      // overlay graph whose outputs looked identical between briefs.
+      await this.renderStagedMontage({
+        avatarUri,
+        captions: subtitlePath,
+        subtitleStyle,
+        suppliedProductImages,
+        generatedBackgrounds,
+        montagePlan,
+        targetDuration,
+        ...(hasMusic ? { musicFile } : {}),
+        directory,
+        output,
+      });
       return output;
     }
     if (hasMusic) {
@@ -231,6 +226,7 @@ export class LocalMediaPipeline implements MediaPipeline {
       ? Math.max(0, (lastSilenceEnd ?? duration) - lastSilenceStart)
       : 0;
     const frameRate = this.frameRate(video?.r_frame_rate);
+    const montagePlan = job.script?.montagePlan ?? createFallbackMontagePlan(job.brief);
     const checks = {
       hasVideo: Boolean(video),
       hasAudio: Boolean(audio),
@@ -246,6 +242,9 @@ export class LocalMediaPipeline implements MediaPipeline {
       audioLevelReasonable: Number.isFinite(meanVolume) && meanVolume >= -30 && meanVolume <= -8,
       trailingSilenceReasonable: trailingSilence <= 1.2,
       blackFramesReasonable: blackDuration <= Math.max(1, duration * 0.1),
+      montageLayoutsVaried: new Set(montagePlan.scenes.map((scene) => scene.kind)).size >= 2,
+      montageMotionsVaried: new Set(montagePlan.scenes.map((scene) => scene.motion)).size >= 2,
+      montageTransitionsVaried: new Set(montagePlan.scenes.map((scene) => scene.transition)).size >= 2,
     };
     const passed = Object.values(checks).every(Boolean);
     const generatedVisualCount = (await readdir(dirname(renderUri)))
@@ -331,6 +330,7 @@ export class LocalMediaPipeline implements MediaPipeline {
     const totalWeight = Math.max(1, input.montagePlan.scenes.reduce((sum, scene) => sum + scene.durationWeight, 0));
     let cursor = 0;
     const segmentFiles: string[] = [];
+    const segmentLengths: number[] = [];
 
     for (const [index, scene] of input.montagePlan.scenes.entries()) {
       const end = index === input.montagePlan.scenes.length - 1
@@ -358,13 +358,17 @@ export class LocalMediaPipeline implements MediaPipeline {
         const background = scene.background
           ? input.generatedBackgrounds.find((item) => item.id === scene.background)?.path
           : undefined;
-        const imageInputs = ["-loop", "1", "-framerate", "25", "-i", productImage];
-        if (background) imageInputs.push("-loop", "1", "-framerate", "25", "-i", background);
+        const generatedScene = scene.kind === "generated_scene" ? background : undefined;
+        const primaryImage = generatedScene ?? productImage;
+        const imageInputs = ["-loop", "1", "-framerate", "25", "-i", primaryImage];
+        if (background && !generatedScene) imageInputs.push("-loop", "1", "-framerate", "25", "-i", background);
         const fade = scene.transition === "cut" ? 0.02 : Math.min(0.28, Math.max(0.12, sceneLength / 5));
         const fadeOut = Math.max(0, sceneLength - fade).toFixed(3);
         let filter: string;
 
-        if (scene.kind === "product_fullscreen") {
+        if (scene.kind === "generated_scene") {
+          filter = `[1:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},${this.fullscreenMotion(scene, sceneLength, width, height)},format=yuv420p,fade=t=in:st=0:d=${fade.toFixed(3)},fade=t=out:st=${fadeOut}:d=${fade.toFixed(3)}[outv]`;
+        } else if (scene.kind === "product_fullscreen") {
           const backgroundFilter = background
             ? `[2:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},eq=brightness=-0.14[bg]`
             : `[1:v]split=2[bgsrc][fgsrc];[bgsrc]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=16:1,eq=brightness=-0.24:saturation=1.15[bg]`;
@@ -386,14 +390,38 @@ export class LocalMediaPipeline implements MediaPipeline {
         ]);
       }
       segmentFiles.push(segment);
+      segmentLengths.push(sceneLength);
       console.info(JSON.stringify({ event: "montage_scene_completed", scene: index + 1, total: input.montagePlan.scenes.length }));
       cursor = end;
     }
 
-    const concatList = resolve(input.directory, "montage-segments.txt");
-    await writeFile(concatList, segmentFiles.map((file) => `file '${file.replace(/'/g, "'\\''")}'`).join("\n"), "utf8");
     const montageBase = resolve(input.directory, "montage-base.mp4");
-    await this.ffmpeg(["-y", "-f", "concat", "-safe", "0", "-i", concatList, "-c", "copy", montageBase]);
+    if (segmentFiles.length === 1) {
+      await this.ffmpeg(["-y", "-i", segmentFiles[0]!, "-c", "copy", montageBase]);
+    } else {
+      const transitionInputs = segmentFiles.flatMap((file) => ["-i", file]);
+      const chains = segmentFiles.map((_file, index) => `[${index}:v]fps=25,settb=AVTB,setpts=PTS-STARTPTS[v${index}]`);
+      let current = "v0";
+      let currentDuration = segmentLengths[0]!;
+      for (let index = 1; index < segmentFiles.length; index += 1) {
+        const scene = input.montagePlan.scenes[index]!;
+        const transitionDuration = scene.transition === "cut"
+          ? 0.02
+          : Math.min(0.38, segmentLengths[index - 1]! / 4, segmentLengths[index]! / 4);
+        const offset = Math.max(0.01, currentDuration - transitionDuration);
+        const next = `x${index}`;
+        chains.push(`[${current}][v${index}]xfade=transition=${this.xfadeTransition(scene.transition)}:duration=${transitionDuration.toFixed(3)}:offset=${offset.toFixed(3)}[${next}]`);
+        current = next;
+        currentDuration += segmentLengths[index]! - transitionDuration;
+      }
+      const speedFactor = input.targetDuration / Math.max(0.1, currentDuration);
+      chains.push(`[${current}]setpts=${speedFactor.toFixed(8)}*PTS,fps=25,format=yuv420p[outv]`);
+      await this.ffmpeg([
+        "-y", ...transitionInputs, "-filter_complex_threads", "1", "-filter_complex", chains.join(";"),
+        "-map", "[outv]", "-an", "-t", String(input.targetDuration), "-c:v", "libx264", "-preset", "veryfast",
+        "-threads", "1", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart", montageBase,
+      ]);
+    }
 
     const musicInput = input.musicFile ? ["-stream_loop", "-1", "-i", input.musicFile] : [];
     const musicFilter = input.musicFile
@@ -503,7 +531,35 @@ export class LocalMediaPipeline implements MediaPipeline {
     if (scene.motion === "pan_right") {
       return `zoompan=z=1.08:x='(iw-iw/zoom)*(1-min(on/${frames},1))':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=25`;
     }
+    if (scene.motion === "pan_up") {
+      return `zoompan=z=1.08:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*min(on/${frames},1)':d=1:s=${width}x${height}:fps=25`;
+    }
+    if (scene.motion === "pan_down") {
+      return `zoompan=z=1.08:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*(1-min(on/${frames},1))':d=1:s=${width}x${height}:fps=25`;
+    }
+    if (scene.motion === "drift") {
+      return `zoompan=z=1.06:x='(iw-iw/zoom)*(0.5+0.35*sin(on/18))':y='(ih-ih/zoom)*(0.5+0.25*cos(on/22))':d=1:s=${width}x${height}:fps=25`;
+    }
+    if (scene.motion === "pulse") {
+      return `zoompan=z='1.04+0.025*sin(on/7)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=25`;
+    }
     return `zoompan=z='min(zoom+0.0012,1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=25`;
+  }
+
+  private xfadeTransition(transition: MontageScene["transition"]): string {
+    const mapping: Record<MontageScene["transition"], string> = {
+      cut: "fadefast",
+      fade: "fade",
+      whip_left: "wipeleft",
+      whip_right: "wiperight",
+      push_up: "slideup",
+      push_down: "slidedown",
+      zoom: "zoomin",
+      circle: "circleopen",
+      reveal: "smoothup",
+      pixelize: "pixelize",
+    };
+    return mapping[transition];
   }
 
   private scenePosition(scene: MontageScene, startTime: number, split: boolean, index: number): { x: string; y: string } {

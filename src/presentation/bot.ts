@@ -3,9 +3,9 @@ import { z } from "zod";
 import type { JobQueue } from "../application/job-queue.js";
 import type { JobService } from "../application/job-service.js";
 import type { ArtifactStore } from "../application/ports.js";
-import type { Brief, Platform } from "../domain/job.js";
+import type { Brief, ContentJob, Platform } from "../domain/job.js";
 import { DraftStore, type BriefDraft } from "./draft-store.js";
-import { formatJob, formatQueue, statusLabels } from "./formatters.js";
+import { formatJob, formatQueue, jobTitle, statusLabels } from "./formatters.js";
 
 export interface BotCapabilities {
   storage: string;
@@ -95,6 +95,29 @@ function productImagesKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text("Готово — перейти дальше", "brief:product:done");
 }
 
+type JobAction = "status" | "preview" | "publish" | "retry" | "cancel";
+
+function jobKeyboard(job: ContentJob): InlineKeyboard {
+  const keyboard = new InlineKeyboard()
+    .text("Статус", `job:status:${job.id}`)
+    .text("Видео", `job:preview:${job.id}`);
+  if (job.status === "ready_for_approval" || job.publications.some((item) => item.status === "failed")) {
+    keyboard.row().text("Опубликовать", `job:publish:${job.id}`);
+  }
+  if (job.status === "failed") keyboard.row().text("Повторить производство", `job:retry:${job.id}`);
+  if (!["published", "cancelled"].includes(job.status)) keyboard.row().text("Отменить", `job:cancel:${job.id}`);
+  return keyboard;
+}
+
+function selectionKeyboard(jobs: ContentJob[], action: JobAction): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  jobs.slice(0, 10).forEach((job, index) => {
+    const raw = `${index + 1}. ${jobTitle(job)} · ${statusLabels[job.status]}`;
+    keyboard.text(raw.length > 58 ? `${raw.slice(0, 55)}…` : raw, `job:${action}:${job.id}`).row();
+  });
+  return keyboard;
+}
+
 function draftSummary(draft: BriefDraft): string {
   const avatarCreationCost = draft.avatarMode === "photo" || Boolean(draft.avatarPrompt) ? 1 : 0;
   const estimatedHeygenCost = (draft.durationSec ?? 45) * 0.05 + avatarCreationCost;
@@ -106,7 +129,7 @@ function draftSummary(draft: BriefDraft): string {
     `Тон: ${draft.tone}`,
     `Длительность: ${draft.durationSec} сек`,
     `Платформы: ${draft.platforms?.join(", ")}`,
-    `Изображения продукта: ${draft.productImageFileIds?.length ?? (draft.productImageFileId ? 1 : 0)}`,
+    `Исходные изображения: ${draft.productImageFileIds?.length ?? (draft.productImageFileId ? 1 : 0)}`,
     `Аватар: ${draft.avatarMode === "photo" ? "новый из фотографии" : draft.avatarPrompt ? `новый по описанию: ${draft.avatarPrompt}` : "готовый многоразовый"}`,
     `CTA: ${draft.callToAction ?? "автоматический"}`,
     `Ориентировочная стоимость HeyGen: $${estimatedHeygenCost.toFixed(2)} (по текущему API-тарифу)`,
@@ -150,7 +173,7 @@ async function acceptImage(ctx: Context, drafts: DraftStore, fileId: string): Pr
     const productImageFileIds = [...existing, fileId];
     await drafts.update(userId, { productImageFileId: productImageFileIds[0]!, productImageFileIds });
     await ctx.reply(
-      `Изображение ${productImageFileIds.length}/6 принято. Пришлите ещё изображения для смены сцен или нажмите «Готово — перейти дальше».`,
+      `Исходное изображение ${productImageFileIds.length}/6 принято. Можно добавить другие ракурсы или нажать «Готово — перейти дальше».`,
       { reply_markup: productImagesKeyboard() },
     );
   } else {
@@ -176,13 +199,13 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     "/create — пошагово создать ролик\n" +
     "/create тема — быстрый старт\n" +
     "/done — закончить добавление изображений\n" +
-    "/status ID — статус задачи\n" +
+    "/status — выбрать ролик и посмотреть статус\n" +
     "/queue — очередь\n" +
-    "/preview ID — получить готовый MP4\n" +
+    "/preview — выбрать ролик и получить MP4\n" +
     "/connect_youtube — подключить канал YouTube\n" +
-    "/publish ID — публикация\n" +
-    "/retry ID — повторить упавшее производство\n" +
-    "/cancel ID — отменить задачу\n" +
+    "/publish — выбрать ролик для публикации\n" +
+    "/retry — выбрать неудавшийся ролик и повторить\n" +
+    "/cancel — выбрать ролик и отменить\n" +
     "/health — состояние интеграций\n" +
     "/settings — текущий режим";
 
@@ -195,7 +218,7 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     if (!topic) await ctx.reply("Шаг 1/9. Пришлите тему ролика одним сообщением.");
     else {
       await drafts.update(userId, { stage: "product_image" });
-      await ctx.reply("Шаг 2/9. Пришлите от 1 до 6 изображений продукта или экранов приложения. После загрузки нажмите кнопку «Готово».");
+      await ctx.reply("Шаг 2/9. Пришлите от 1 до 6 исходных изображений того, о чём должен быть ролик. AI сам распознает содержимое. После загрузки нажмите «Готово».");
     }
   });
 
@@ -208,7 +231,7 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     }
     const imageCount = draft.productImageFileIds?.length ?? (draft.productImageFileId ? 1 : 0);
     if (imageCount === 0) {
-      await ctx.reply("Нужно минимум одно изображение продукта, логотип или скриншот приложения.");
+      await ctx.reply("Нужно минимум одно исходное изображение объекта ролика.");
       return;
     }
     await drafts.update(userId, { stage: "avatar_mode" });
@@ -251,7 +274,7 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     const draft = await drafts.get(userIdOf(ctx));
     if (!draft) return;
     if (draft.stage === "product_image") {
-      await ctx.reply("Фото продукта обязательно. Пришлите фотографию, логотип или скриншот приложения.");
+      await ctx.reply("Исходное изображение обязательно. Пришлите то, о чём должен быть ролик.");
       return;
     }
     if (draft.stage !== "cta") return;
@@ -298,7 +321,7 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     const job = await jobs.create(userId, completedBrief(draft));
     await drafts.delete(userId);
     queue.enqueue("produce", userId, job.id);
-    await ctx.reply(`Задача #${job.id} добавлена в очередь.\nПроверить: /status ${job.id}`);
+    await ctx.reply(`«${jobTitle(job)}» добавлен в очередь.`, { reply_markup: jobKeyboard(job) });
   });
 
   bot.callbackQuery("brief:cancel", async (ctx) => {
@@ -314,7 +337,7 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     if (draft.stage === "topic") {
       if (ctx.message.text.trim().length < 3) return void await ctx.reply("Тема слишком короткая.");
       await drafts.update(userId, { topic: ctx.message.text.trim(), stage: "product_image" });
-      await ctx.reply("Шаг 2/9. Пришлите от 1 до 6 изображений продукта или экранов приложения. После загрузки нажмите кнопку «Готово».");
+      await ctx.reply("Шаг 2/9. Пришлите от 1 до 6 исходных изображений того, о чём должен быть ролик. AI сам распознает содержимое. После загрузки нажмите «Готово».");
     } else if (draft.stage === "audience") {
       await drafts.update(userId, { audience: ctx.message.text.trim(), stage: "tone" });
       await ctx.reply("Шаг 6/9. Выберите тон.", { reply_markup: toneKeyboard() });
@@ -333,16 +356,81 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     }
   });
 
-  bot.command("status", async (ctx) => {
-    const id = argumentOf(ctx.message?.text);
-    if (!id) return void await ctx.reply("Укажите ID: /status abc123");
+  const showJobPicker = async (ctx: Context, action: JobAction): Promise<void> => {
+    const all = await jobs.list(userIdOf(ctx));
+    const available = all.filter((job) => {
+      if (action === "preview") return job.artifacts.some((artifact) => artifact.kind === "render");
+      if (action === "publish") return job.status === "ready_for_approval" || job.publications.some((item) => item.status === "failed");
+      if (action === "retry") return job.status === "failed";
+      if (action === "cancel") return !["published", "cancelled"].includes(job.status);
+      return true;
+    });
+    if (available.length === 0) {
+      await ctx.reply(action === "status" ? "Роликов пока нет. Запустите /create." : "Сейчас нет роликов, доступных для этого действия.");
+      return;
+    }
+    const labels: Record<JobAction, string> = {
+      status: "Выберите ролик:", preview: "Какой ролик показать?", publish: "Какой ролик опубликовать?",
+      retry: "Какой ролик повторить?", cancel: "Какой ролик отменить?",
+    };
+    await ctx.reply(labels[action], { reply_markup: selectionKeyboard(available, action) });
+  };
+
+  const sendStatus = async (ctx: Context, id: string): Promise<void> => {
     const job = await jobs.get(userIdOf(ctx), id);
     const render = job.artifacts.find((artifact) => artifact.kind === "render");
     const downloadUrl = render ? await artifactStore.createDownloadUrl(render.uri) : undefined;
-    await ctx.reply(formatJob(job) + (downloadUrl ? `\n\nСкачать ролик (ссылка на 1 час):\n${downloadUrl}` : ""), { link_preview_options: { is_disabled: true } });
+    await ctx.reply(formatJob(job) + (downloadUrl ? `\n\nСкачать ролик (ссылка на 1 час):\n${downloadUrl}` : ""), {
+      link_preview_options: { is_disabled: true }, reply_markup: jobKeyboard(job),
+    });
+  };
+
+  const sendPreview = async (ctx: Context, id: string): Promise<void> => {
+    const job = await jobs.get(userIdOf(ctx), id);
+    const render = job.artifacts.find((artifact) => artifact.kind === "render");
+    if (!render || render.uri.startsWith("mock://")) return void await ctx.reply("Файл предпросмотра ещё не готов.", { reply_markup: jobKeyboard(job) });
+    const file = await artifactStore.materialize(render.uri);
+    await ctx.replyWithVideo(new InputFile(file), { caption: `«${jobTitle(job)}»`, reply_markup: jobKeyboard(job) });
+  };
+
+  const enqueuePublication = async (ctx: Context, id: string): Promise<void> => {
+    if (capabilities.publishing === "disabled") {
+      return void await ctx.reply("Публикация временно отключена владельцем бота.");
+    }
+    const userId = userIdOf(ctx);
+    const job = await jobs.get(userId, id);
+    const retryPublication = await jobs.canRetryPublication(userId, id);
+    if (job.status !== "ready_for_approval" && !retryPublication) {
+      return void await ctx.reply(`Публикация недоступна. Статус: ${statusLabels[job.status]}`, { reply_markup: jobKeyboard(job) });
+    }
+    queue.enqueue("publish", userId, id);
+    await ctx.reply(`${retryPublication ? "Повторная публикация" : "Публикация"} «${jobTitle(job)}» добавлена в очередь.`);
+  };
+
+  const enqueueRetry = async (ctx: Context, id: string): Promise<void> => {
+    const userId = userIdOf(ctx);
+    const job = await jobs.get(userId, id);
+    await jobs.retryFailedProduction(userId, id);
+    queue.enqueue("produce", userId, id);
+    await ctx.reply(`«${jobTitle(job)}» поставлен в очередь заново.`);
+  };
+
+  const cancelJob = async (ctx: Context, id: string): Promise<void> => {
+    const job = await jobs.cancel(userIdOf(ctx), id);
+    await ctx.reply(formatJob(job), { reply_markup: jobKeyboard(job) });
+  };
+
+  bot.command("status", async (ctx) => {
+    const id = argumentOf(ctx.message?.text);
+    if (!id) return void await showJobPicker(ctx, "status");
+    await sendStatus(ctx, id);
   });
 
-  bot.command("queue", async (ctx) => ctx.reply(formatQueue(await jobs.list(userIdOf(ctx)))));
+  bot.command("queue", async (ctx) => {
+    const list = await jobs.list(userIdOf(ctx));
+    if (list.length > 0) await ctx.reply(formatQueue(list), { reply_markup: selectionKeyboard(list, "status") });
+    else await ctx.reply(formatQueue(list));
+  });
 
   bot.command("connect_youtube", async (ctx) => {
     if (!youtube) return void await ctx.reply("YouTube OAuth ещё не настроен владельцем бота.");
@@ -352,43 +440,37 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
 
   bot.command("preview", async (ctx) => {
     const id = argumentOf(ctx.message?.text);
-    if (!id) return void await ctx.reply("Укажите ID: /preview abc123");
-    const job = await jobs.get(userIdOf(ctx), id);
-    const render = job.artifacts.find((artifact) => artifact.kind === "render");
-    if (!render || render.uri.startsWith("mock://")) return void await ctx.reply("Файл предпросмотра ещё не готов.");
-    const file = await artifactStore.materialize(render.uri);
-    await ctx.replyWithVideo(new InputFile(file), { caption: `Ролик #${job.id}` });
+    if (!id) return void await showJobPicker(ctx, "preview");
+    await sendPreview(ctx, id);
   });
 
   bot.command("publish", async (ctx) => {
-    if (capabilities.publishing === "disabled") {
-      return void await ctx.reply("Публикация временно отключена. Сначала завершаем производство роликов; YouTube будет подключён последним этапом.");
-    }
     const id = argumentOf(ctx.message?.text);
-    if (!id) return void await ctx.reply("Укажите ID: /publish abc123");
-    const userId = userIdOf(ctx);
-    const job = await jobs.get(userId, id);
-    const retryPublication = await jobs.canRetryPublication(userId, id);
-    if (job.status !== "ready_for_approval" && !retryPublication) {
-      return void await ctx.reply(`Публикация недоступна. Статус: ${statusLabels[job.status]}`);
-    }
-    queue.enqueue("publish", userId, id);
-    await ctx.reply(`${retryPublication ? "Повторная публикация" : "Публикация"} #${id} добавлена в очередь.`);
+    if (!id) return void await showJobPicker(ctx, "publish");
+    await enqueuePublication(ctx, id);
   });
 
   bot.command("retry", async (ctx) => {
     const id = argumentOf(ctx.message?.text);
-    if (!id) return void await ctx.reply("Укажите ID: /retry abc123");
-    const userId = userIdOf(ctx);
-    await jobs.retryFailedProduction(userId, id);
-    queue.enqueue("produce", userId, id);
-    await ctx.reply(`Задача #${id} поставлена заново.`);
+    if (!id) return void await showJobPicker(ctx, "retry");
+    await enqueueRetry(ctx, id);
   });
 
   bot.command("cancel", async (ctx) => {
     const id = argumentOf(ctx.message?.text);
-    if (!id) return void await ctx.reply("Укажите ID: /cancel abc123");
-    await ctx.reply(formatJob(await jobs.cancel(userIdOf(ctx), id)));
+    if (!id) return void await showJobPicker(ctx, "cancel");
+    await cancelJob(ctx, id);
+  });
+
+  bot.callbackQuery(/^job:(status|preview|publish|retry|cancel):([A-Za-z0-9_-]+)$/, async (ctx) => {
+    const action = ctx.match[1] as JobAction;
+    const id = ctx.match[2]!;
+    await ctx.answerCallbackQuery();
+    if (action === "status") await sendStatus(ctx, id);
+    else if (action === "preview") await sendPreview(ctx, id);
+    else if (action === "publish") await enqueuePublication(ctx, id);
+    else if (action === "retry") await enqueueRetry(ctx, id);
+    else await cancelJob(ctx, id);
   });
 
   bot.command("health", async (ctx) => {
@@ -411,7 +493,7 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
 
   bot.on("message:text", async (ctx) => {
     if (ctx.message.text.startsWith("/")) {
-      await ctx.reply("Неизвестная команда. Откройте /help. ID указывается через пробел, например: /preview abc123");
+      await ctx.reply("Неизвестная команда. Откройте /help. Для выбора ролика бот покажет кнопки.");
     }
   });
 
@@ -421,12 +503,12 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
       const render = job.artifacts.find((artifact) => artifact.kind === "render");
       if (render && !render.uri.startsWith("mock://")) {
         const file = await artifactStore.materialize(render.uri);
-        await bot.api.sendVideo(userId, new InputFile(file), { caption: `Ролик #${job.id} готов. После проверки можно использовать /publish ${job.id}` });
+        await bot.api.sendVideo(userId, new InputFile(file), { caption: `«${jobTitle(job)}» готов.`, reply_markup: jobKeyboard(job) });
       } else {
-        await bot.api.sendMessage(userId, `Ролик #${job.id} готов. Проверка: /status ${job.id}`);
+        await bot.api.sendMessage(userId, `«${jobTitle(job)}» готов.`, { reply_markup: jobKeyboard(job) });
       }
     } else {
-      await bot.api.sendMessage(userId, formatJob(job));
+      await bot.api.sendMessage(userId, formatJob(job), { reply_markup: jobKeyboard(job) });
     }
   });
 

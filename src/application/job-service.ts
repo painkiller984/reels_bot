@@ -17,7 +17,11 @@ export class JobService {
   ) {}
 
   async create(userId: string, input: unknown): Promise<ContentJob> {
-    const brief = BriefSchema.parse(input);
+    const parsedBrief = BriefSchema.parse(input);
+    const brief = BriefSchema.parse({
+      ...parsedBrief,
+      creativeSeed: parsedBrief.creativeSeed ?? Math.floor(Math.random() * 2_147_483_646) + 1,
+    });
     const now = new Date();
     const job: ContentJob = {
       id: await this.jobs.nextId(),
