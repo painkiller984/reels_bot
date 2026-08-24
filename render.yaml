@@ -80,6 +80,8 @@ services:
         sync: false
       - key: HEYGEN_VOICE_ID
         sync: false
+      - key: HEYGEN_FEMALE_VOICE_ID
+        sync: false
       - key: HEYGEN_MAX_ESTIMATED_JOB_COST_USD
         value: 3
 

@@ -15,6 +15,7 @@ export interface HeyGenAvatarOptions {
   aspectRatio: "9:16" | "16:9";
   defaultAvatarId?: string;
   voiceId?: string;
+  femaleVoiceId?: string;
   maxEstimatedJobCostUsd: number;
   telegramFiles: TelegramFileClient;
   avatarProfiles?: AvatarProfileStore;
@@ -39,6 +40,9 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
       && !job.brief.avatarImageFileId
       && !job.brief.avatarPrompt;
     const usesIntegratedVoice = audioFile.startsWith("heygen://");
+    const selectedVoiceId = job.brief.avatarVoice === "female"
+      ? this.options.femaleVoiceId
+      : this.options.voiceId;
     const audioAssetId = usesIntegratedVoice ? undefined : await this.uploadAsset(audioFile, "audio/mpeg");
     const narration = [job.script?.hook, job.script?.body, job.script?.callToAction].filter(Boolean).join(" ");
     const narrationKey = createHash("sha256").update(narration).digest("hex").slice(0, 16);
@@ -56,7 +60,7 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
         aspect_ratio: usesDefaultDeskAvatar ? "16:9" : this.options.aspectRatio,
         engine: { type: this.options.engine },
         fit: "cover",
-        ...(usesIntegratedVoice ? { script: narration, ...(this.options.voiceId ? { voice_id: this.options.voiceId } : {}) } : { audio_asset_id: audioAssetId }),
+        ...(usesIntegratedVoice ? { script: narration, ...(selectedVoiceId ? { voice_id: selectedVoiceId } : {}) } : { audio_asset_id: audioAssetId }),
         ...(usesIntegratedVoice ? { voice_settings: { locale: job.brief.language === "ru" ? "ru-RU" : job.brief.language } } : {}),
         output_format: "mp4",
         caption: { file_format: "srt" },
@@ -101,6 +105,7 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
       heygenAvatarId: avatarId,
       name: job.brief.avatarName ?? `Аватар ${job.id}`,
       ...(job.brief.avatarImageFileId ? { sourceFileId: job.brief.avatarImageFileId } : {}),
+      ...(job.brief.avatarVoice ? { voice: job.brief.avatarVoice } : {}),
     });
     return avatarId;
   }

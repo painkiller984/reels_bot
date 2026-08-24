@@ -1,7 +1,7 @@
 import type { Platform } from "../domain/job.js";
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 
-export type DraftStage = "source_video" | "topic" | "call_to_action" | "avatar" | "avatar_image" | "confirm";
+export type DraftStage = "source_video" | "topic" | "call_to_action" | "avatar" | "avatar_image" | "avatar_voice" | "confirm";
 
 export interface BriefDraft {
   stage: DraftStage;
@@ -14,6 +14,8 @@ export interface BriefDraft {
   avatarId?: string | undefined;
   avatarName?: string;
   avatarImageFileId?: string;
+  avatarVoice?: "male" | "female" | undefined;
+  avatarProfileId?: string | undefined;
 }
 
 export class DraftStore {

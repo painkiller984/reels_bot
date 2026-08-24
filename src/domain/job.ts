@@ -23,6 +23,7 @@ export const BriefSchema = z.object({
   avatarName: z.string().trim().min(2).max(80).optional(),
   avatarPrompt: z.string().trim().min(3).max(1_000).optional(),
   avatarImageFileId: z.string().min(1).optional(),
+  avatarVoice: z.enum(["male", "female"]).optional(),
   creativeSeed: z.number().int().min(1).max(2_147_483_647).optional(),
 }).superRefine((brief, context) => {
   if (!brief.sourceVideoFileId && !brief.productImageFileId) {

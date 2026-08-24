@@ -86,6 +86,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
         telegramFiles,
         ...(avatarProfiles ? { avatarProfiles } : {}),
         ...(config.HEYGEN_VOICE_ID ? { voiceId: config.HEYGEN_VOICE_ID } : {}),
+        ...(config.HEYGEN_FEMALE_VOICE_ID ? { femaleVoiceId: config.HEYGEN_FEMALE_VOICE_ID } : {}),
         ...(config.HEYGEN_DEFAULT_AVATAR_ID ? { defaultAvatarId: config.HEYGEN_DEFAULT_AVATAR_ID } : {}),
         maxEstimatedJobCostUsd: config.HEYGEN_MAX_ESTIMATED_JOB_COST_USD,
       })

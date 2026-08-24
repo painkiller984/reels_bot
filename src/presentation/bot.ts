@@ -29,6 +29,9 @@ export function sourceVideoDurationError(duration: number | undefined): string |
 }
 const briefKeyboard = () => new InlineKeyboard().text("Создать ролик", "brief:confirm").text("Отмена", "brief:cancel");
 const callToActionKeyboard = () => new InlineKeyboard().text("Без призыва", "brief:cta:none");
+const avatarVoiceKeyboard = () => new InlineKeyboard()
+  .text("Мужской голос", "brief:avatar:voice:male")
+  .text("Женский голос", "brief:avatar:voice:female");
 
 function avatarKeyboard(label: string): InlineKeyboard {
   return new InlineKeyboard()
@@ -57,6 +60,7 @@ function draftSummary(draft: BriefDraft, defaultAvatarLabel: string): string {
   return [
     "Проверьте задание:", `Тема: ${draft.topic}`, `Исходный ролик: принят (${draft.sourceVideoDurationSec ?? "?"} сек)`,
     `Призыв к действию: ${draft.callToAction ?? "не добавлять"}`, `Аватар: ${avatar}`,
+    `Голос: ${draft.avatarVoice === "female" ? "женский" : "мужской"}`,
     "Формат: исходное видео + говорящая AI-голова + субтитры", "Платформа: YouTube",
   ].join("\n");
 }
@@ -66,6 +70,7 @@ function completedBrief(draft: BriefDraft): unknown {
     topic: draft.topic, goal: "education", audience: "широкая аудитория", tone: "живой и уверенный", language: "ru",
     durationSec: duration, platforms: ["youtube"], sourceVideoFileId: draft.sourceVideoFileId, sourceVideoDurationSec: duration,
     avatarMode: draft.avatarMode ?? "generated", ...(draft.avatarId ? { avatarId: draft.avatarId } : {}),
+    ...(draft.avatarVoice ? { avatarVoice: draft.avatarVoice } : {}),
     ...(draft.callToAction ? { callToAction: draft.callToAction } : {}),
     ...(draft.avatarName ? { avatarName: draft.avatarName } : {}), ...(draft.avatarImageFileId ? { avatarImageFileId: draft.avatarImageFileId } : {}),
   };
@@ -130,7 +135,7 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
   });
 
   bot.callbackQuery("brief:avatar:generated", async (ctx) => {
-    const draft = await drafts.update(userIdOf(ctx), { avatarMode: "generated", avatarId: undefined, avatarName: defaultAvatarLabel, stage: "confirm" });
+    const draft = await drafts.update(userIdOf(ctx), { avatarMode: "generated", avatarId: undefined, avatarVoice: "male", avatarProfileId: undefined, avatarName: defaultAvatarLabel, stage: "confirm" });
     await ctx.answerCallbackQuery();
     if (draft) await ctx.reply(draftSummary(draft, defaultAvatarLabel), { reply_markup: briefKeyboard() });
   });
@@ -153,15 +158,37 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     const profile = avatars ? await avatars.get(userIdOf(ctx), ctx.match[1]!) : undefined;
     await ctx.answerCallbackQuery();
     if (!profile) return void await ctx.reply("Аватар не найден. Выберите его ещё раз через /avatars.");
-    const draft = await drafts.update(userIdOf(ctx), { avatarMode: "saved", avatarId: profile.heygenAvatarId, avatarName: profile.name, stage: "confirm" });
-    if (draft) await ctx.reply(draftSummary(draft, defaultAvatarLabel), { reply_markup: briefKeyboard() });
+    const draft = await drafts.update(userIdOf(ctx), {
+      avatarMode: "saved",
+      avatarId: profile.heygenAvatarId,
+      avatarName: profile.name,
+      avatarProfileId: profile.id,
+      ...(profile.voice ? { avatarVoice: profile.voice } : { avatarVoice: undefined }),
+      stage: profile.voice ? "confirm" : "avatar_voice",
+    });
+    if (!draft) return;
+    if (profile.voice) await ctx.reply(draftSummary(draft, defaultAvatarLabel), { reply_markup: briefKeyboard() });
+    else await ctx.reply("Один раз выберите голос для этого сохранённого аватара. Выбор запомнится.", { reply_markup: avatarVoiceKeyboard() });
   });
   bot.on("message:photo", async (ctx) => {
     const draft = await drafts.get(userIdOf(ctx));
     if (!draft || draft.stage !== "avatar_image") return void await ctx.reply("Фото можно прислать после /create → «Создать аватар из фото».");
     const photo = ctx.message.photo.at(-1)!;
-    const updated = await drafts.update(userIdOf(ctx), { avatarImageFileId: photo.file_id, avatarName: `Аватар: ${(draft.topic ?? "ведущий").slice(0, 45)}`, stage: "confirm" });
-    await ctx.reply(draftSummary(updated!, defaultAvatarLabel), { reply_markup: briefKeyboard() });
+    await drafts.update(userIdOf(ctx), {
+      avatarImageFileId: photo.file_id,
+      avatarName: `Аватар: ${(draft.topic ?? "ведущий").slice(0, 45)}`,
+      stage: "avatar_voice",
+    });
+    await ctx.reply("Фото принято. Один раз выберите голос — он сохранится вместе с аватаром.", { reply_markup: avatarVoiceKeyboard() });
+  });
+  bot.callbackQuery(/^brief:avatar:voice:(male|female)$/, async (ctx) => {
+    const current = await drafts.get(userIdOf(ctx));
+    await ctx.answerCallbackQuery();
+    if (!current || current.stage !== "avatar_voice") return;
+    const voice = ctx.match[1] as "male" | "female";
+    if (current.avatarProfileId && avatars) await avatars.updateVoice(userIdOf(ctx), current.avatarProfileId, voice);
+    const updated = await drafts.update(userIdOf(ctx), { avatarVoice: voice, stage: "confirm" });
+    if (updated) await ctx.reply(draftSummary(updated, defaultAvatarLabel), { reply_markup: briefKeyboard() });
   });
   bot.callbackQuery("brief:confirm", async (ctx) => {
     const draft = await drafts.get(userIdOf(ctx)); await ctx.answerCallbackQuery();
