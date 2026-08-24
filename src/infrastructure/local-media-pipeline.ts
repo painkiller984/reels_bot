@@ -52,6 +52,15 @@ export function trailingSilenceIsReasonable(hasSourceVideo: boolean, trailingSil
   return hasSourceVideo || trailingSilenceSec <= 1.2;
 }
 
+export function sourceVideoAvatarCorners(width: number, height: number, size: number, margin = 48): Array<{ x: number; y: number; top: boolean }> {
+  return [
+    { x: margin, y: height - size - margin, top: false },
+    { x: width - size - margin, y: height - size - margin, top: false },
+    { x: margin, y: margin, top: true },
+    { x: width - size - margin, y: margin, top: true },
+  ];
+}
+
 export interface LocalMediaOptions {
   artifactsDir: string;
   ffmpegPath: string;
@@ -397,13 +406,7 @@ export class LocalMediaPipeline implements MediaPipeline {
 
   private avatarOverlayPosition(job: ContentJob, width: number, height: number, size: number): { x: number; y: number; top: boolean } {
     const seed = job.brief.creativeSeed ?? [...job.id].reduce((sum, char) => sum + char.charCodeAt(0), 0);
-    const margin = 34;
-    const choices = [
-      { x: margin, y: height - size - 190, top: false },
-      { x: width - size - margin, y: height - size - 190, top: false },
-      { x: margin, y: 105, top: true },
-      { x: width - size - margin, y: 105, top: true },
-    ];
+    const choices = sourceVideoAvatarCorners(width, height, size);
     return choices[seed % choices.length]!;
   }
 

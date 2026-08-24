@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   LocalMediaPipeline,
   SOURCE_VIDEO_AVATAR_SCALE,
+  sourceVideoAvatarCorners,
   sourceVideoTimeline,
   trailingSilenceIsReasonable,
 } from "../src/infrastructure/local-media-pipeline.js";
@@ -30,6 +31,12 @@ describe("LocalMediaPipeline subtitle normalization", () => {
 
   it("uses a 1.5x larger circular avatar coefficient", () => {
     expect(SOURCE_VIDEO_AVATAR_SCALE).toBeCloseTo(0.29 * 1.5);
+    expect(sourceVideoAvatarCorners(720, 1280, 156)).toEqual([
+      { x: 48, y: 1076, top: false },
+      { x: 516, y: 1076, top: false },
+      { x: 48, y: 48, top: true },
+      { x: 516, y: 48, top: true },
+    ]);
   });
 
   it("extends the source timeline instead of cutting avatar speech", () => {
