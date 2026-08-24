@@ -3,7 +3,7 @@ export interface AvatarProfile {
   userId: string;
   heygenAvatarId: string;
   name: string;
-  sourceFileId?: string;
+  sourceFileId?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

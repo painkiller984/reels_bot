@@ -10,7 +10,7 @@ export interface BriefDraft {
   sourceVideoFileId?: string;
   sourceVideoDurationSec?: number;
   avatarMode?: "generated" | "photo" | "saved";
-  avatarId?: string;
+  avatarId?: string | undefined;
   avatarName?: string;
   avatarImageFileId?: string;
 }

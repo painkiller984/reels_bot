@@ -16,7 +16,7 @@ export class PrismaAvatarProfileStore implements AvatarProfileStore {
     return this.prisma.avatarProfile.upsert({
       where: { userId_heygenAvatarId: { userId: input.userId, heygenAvatarId: input.heygenAvatarId } },
       create: input,
-      update: { name: input.name, sourceFileId: input.sourceFileId },
+      update: { name: input.name, ...(input.sourceFileId !== undefined ? { sourceFileId: input.sourceFileId } : {}) },
     });
   }
 }

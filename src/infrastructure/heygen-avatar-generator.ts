@@ -86,7 +86,7 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
       userId: job.userId,
       heygenAvatarId: avatarId,
       name: job.brief.avatarName ?? `Аватар ${job.id}`,
-      sourceFileId: job.brief.avatarImageFileId,
+      ...(job.brief.avatarImageFileId ? { sourceFileId: job.brief.avatarImageFileId } : {}),
     });
     return avatarId;
   }
