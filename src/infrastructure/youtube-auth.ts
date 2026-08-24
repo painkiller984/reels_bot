@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { google, type Auth } from "googleapis";
 import type { YoutubeTokenStore } from "./youtube-token-store.js";
 
+const youtubeUploadScope = "https://www.googleapis.com/auth/youtube.upload";
+
 export interface YoutubeAuthOptions {
   clientId: string;
   clientSecret: string;
@@ -23,7 +25,8 @@ export class YoutubeAuthService {
     return this.client().generateAuthUrl({
       access_type: "offline",
       prompt: "consent",
-      scope: ["https://www.googleapis.com/auth/youtube.upload"],
+      include_granted_scopes: true,
+      scope: [youtubeUploadScope],
       state,
     });
   }
@@ -36,11 +39,19 @@ export class YoutubeAuthService {
     client.on("tokens", async (updated: Auth.Credentials) => {
       await this.options.tokenStore.set(userId, updated);
     });
+    const accessToken = await client.getAccessToken();
+    if (!accessToken.token) throw new Error("Google не выдал токен доступа. Переподключите YouTube через /connect_youtube.");
+    await this.assertUploadScope(client, accessToken.token);
     return client;
   }
 
   async isConnected(userId: string): Promise<boolean> {
-    return Boolean((await this.options.tokenStore.get(userId))?.refresh_token);
+    try {
+      await this.getAuthorizedClient(userId);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private client(): Auth.OAuth2Client {
@@ -59,7 +70,11 @@ export class YoutubeAuthService {
     }
     let stage: "token_exchange" | "token_storage" = "token_exchange";
     try {
-      const { tokens } = await this.client().getToken(code);
+      const client = this.client();
+      const { tokens } = await client.getToken(code);
+      if (!tokens.access_token) throw new Error("Google не вернул access token");
+      const tokenInfo = await this.assertUploadScope(client, tokens.access_token);
+      tokens.scope = tokenInfo.scopes.join(" ");
       stage = "token_storage";
       await this.options.tokenStore.set(pending.userId, tokens);
       this.pending.delete(state!);
@@ -69,6 +84,14 @@ export class YoutubeAuthService {
       console.error(JSON.stringify({ event: "youtube_oauth_callback_failed", stage, message }));
       response.writeHead(500, { "content-type": "text/html; charset=utf-8" }).end("<h2>Не удалось завершить авторизацию.</h2>");
     }
+  }
+
+  private async assertUploadScope(client: Auth.OAuth2Client, accessToken: string) {
+    const tokenInfo = await client.getTokenInfo(accessToken);
+    if (!tokenInfo.scopes.includes(youtubeUploadScope)) {
+      throw new Error("Google не предоставил разрешение youtube.upload. Удалите старую связь приложения в аккаунте Google и выполните /connect_youtube заново.");
+    }
+    return tokenInfo;
   }
 
 }
