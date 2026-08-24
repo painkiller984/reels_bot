@@ -65,7 +65,7 @@ services:
       - key: HEYGEN_ASPECT_RATIO
         value: 9:16
       - key: YOUTUBE_PRIVACY_STATUS
-        value: private
+        value: public
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: OPENROUTER_API_KEY

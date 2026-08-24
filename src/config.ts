@@ -58,7 +58,7 @@ const ConfigSchema = z.object({
   YOUTUBE_OAUTH_REDIRECT_URI: z.string().url().default("http://localhost:3000/oauth/youtube/callback"),
   YOUTUBE_OAUTH_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   YOUTUBE_TOKEN_FILE: z.string().min(1).default(".data/youtube-tokens.json"),
-  YOUTUBE_PRIVACY_STATUS: z.enum(["private", "unlisted", "public"]).default("private"),
+  YOUTUBE_PRIVACY_STATUS: z.enum(["private", "unlisted", "public"]).default("public"),
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
