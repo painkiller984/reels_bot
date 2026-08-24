@@ -88,6 +88,21 @@ export const scriptJsonSchema = {
   },
 } as const;
 
+export const sourceVideoScriptJsonSchema = {
+  name: "source_video_reel_script",
+  strict: true,
+  schema: {
+    type: "object",
+    properties: {
+      hook: { type: "string", minLength: 1, description: "Короткий хук без приветствия" },
+      body: { type: "string", minLength: 1, description: "Точный обзор содержания исходного видео" },
+      callToAction: { type: "string", minLength: 0, description: "Призыв из брифа или пустая строка" },
+    },
+    required: ["hook", "body", "callToAction"],
+    additionalProperties: false,
+  },
+} as const;
+
 function spokenWordCount(script: Script): number {
   return [script.hook, script.body, script.callToAction]
     .join(" ")
@@ -146,10 +161,12 @@ export function createFallbackScript(brief: Brief): Script {
 
 export function normalizeMontagePlan(brief: Brief, script: Script): Script {
   const fallback = createFallbackMontagePlan(brief);
-  // Source-video mode renders the supplied clip itself. The plan still gives
-  // the LLM a useful way to think about pacing, but must not force product
-  // image scenes (there may be no product image at all).
-  if (brief.sourceVideoFileId) return { ...script, montagePlan: script.montagePlan ?? fallback };
+  // Source-video mode renders the supplied clip itself. It must never carry
+  // legacy AI scenes or generated visuals into status, billing or rendering.
+  if (brief.sourceVideoFileId) {
+    const { montagePlan: _unused, ...sourceVideoScript } = script;
+    return sourceVideoScript;
+  }
   if (!script.montagePlan) return { ...script, montagePlan: fallback };
   const productCount = productImageIds(brief).length;
   let scenes = script.montagePlan.scenes.map((scene) => ({
@@ -252,25 +269,20 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
           model: this.options.model,
           temperature: 0.65,
           ...(strictStructuredOutput ? {
-            response_format: { type: "json_schema", json_schema: scriptJsonSchema },
+            response_format: { type: "json_schema", json_schema: brief.sourceVideoFileId ? sourceVideoScriptJsonSchema : scriptJsonSchema },
             provider: { require_parameters: true },
           } : {}),
           messages: [
             {
               role: "system",
               content:
-                "Ты режиссёр коротких вертикальных видео. Верни строго JSON со сценарием и монтажным планом. " +
+                `Ты сценарист коротких вертикальных видео. Верни строго JSON ${brief.sourceVideoFileId ? "только со сценарием обзора" : "со сценарием и монтажным планом"}. ` +
                 "Текст должен естественно звучать вслух, начинаться без приветствия, не содержать непроверяемых обещаний, " +
                 `содержать от ${Math.floor(brief.durationSec * 1.45)} до ${Math.ceil(brief.durationSec * 2.5)} слов (цель — ${requestedWords}) и быть написан на языке ${brief.language}. ` +
                 (attempt > 1 ? "Предыдущий вариант не прошёл проверку; точно соблюди объём и JSON-схему. " : "") +
-                "Создай 4–7 быстрых сцен как уникальный режиссёрский план именно для смысла этого сценария. Не повторяй фиксированную последовательность макетов. " +
-                "Для каждой сцены заполни beat — конкретный смысловой фрагмент сценария — и осознанно выбери под него композицию, исходное изображение, движение, переход и длительность; соседние сцены должны визуально отличаться. " +
-                "generatedVisuals добавляй только когда конкретному моменту сценария нужен дополнительный кадр, максимум два. " +
-                "purpose=reference_scene означает новый цельный кадр по исходному изображению: опиши в prompt любую уместную сцену, ракурс, окружение и действие — не обязательно человека или руки. " +
-                "Сохраняй узнаваемость, форму, цвет, упаковку и логотип физического объекта. Интерфейсы, скриншоты и мелкий текст не перерисовывай: показывай исходник через обычные product-сцены. " +
                 (brief.sourceVideoFileId
-                  ? "В этом задании визуальная основа — присланное пользователем исходное видео. Сценарий должен быть комментарием/обзором именно оставленного фрагмента видео; не выдумывай продукт и не предлагай AI-фоны. Монтажный план опиши как темп исходного видео и позицию говорящего аватара. Если в брифе нет callToAction, верни пустую строку в callToAction и закончи body естественным выводом по последнему показанному кадру. "
-                  : "Для generated_scene укажи соответствующий generated_N в background. Хотя бы одна сцена обязана показывать исходник без генеративного изменения. ") +
+                  ? "Визуальная основа — всё присланное пользователем видео. Сценарий должен быть комментарием/обзором именно показанного и сказанного; не выдумывай продукт, не создавай монтажный план, сцены или AI-фоны. Если в брифе нет callToAction, верни пустую строку и закончи body естественным выводом по финалу видео. "
+                  : "Создай 4–7 быстрых сцен как уникальный режиссёрский план именно для смысла сценария. Для каждой сцены заполни beat, композицию, исходник, движение, переход и длительность. generatedVisuals добавляй только при необходимости, максимум два. Для generated_scene укажи generated_N в background. Хотя бы одна сцена обязана показывать исходник без генеративного изменения. Сохраняй физический товар узнаваемым, а интерфейсы и мелкий текст не перерисовывай. ") +
                 "creativeSeed используй как источник вариативности. Не добавляй Markdown и пояснения.",
             },
             {

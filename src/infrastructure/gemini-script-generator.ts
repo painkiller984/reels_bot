@@ -1,6 +1,6 @@
 import type { ScriptGenerator } from "../application/ports.js";
 import { productImageIds, ScriptSchema, type Brief, type Script } from "../domain/job.js";
-import { createFallbackScript, normalizeMontagePlan, parseScriptResponse, scriptJsonSchema } from "./openrouter-script-generator.js";
+import { createFallbackScript, normalizeMontagePlan, parseScriptResponse, scriptJsonSchema, sourceVideoScriptJsonSchema } from "./openrouter-script-generator.js";
 import { TelegramFileClient } from "./telegram-file-client.js";
 import type { VideoContextProvider } from "./telegram-video-context.js";
 
@@ -52,13 +52,10 @@ export class GeminiScriptGenerator implements ScriptGenerator {
               parts: [
                 {
                   text:
-                    "Ты режиссёр коротких вертикальных видео. " +
-                    "Верни сценарий и уникальный монтажный план с 4–7 сценами, построенный по смыслу текста, а не по фиксированному шаблону. " +
-                    "Для каждой сцены заполни beat — смысловой фрагмент сценария — и осознанно выбери под него композицию, исходник, движение и переход; соседние сцены должны различаться. " +
-                    "generatedVisuals добавляй только когда сценарию нужен дополнительный кадр, максимум два. reference_scene — цельный новый кадр по выбранному исходнику; " +
-                    "сам выбери уместный ракурс, окружение и действие, не своди всё к человеку с товаром. Физический объект должен оставаться узнаваемым. " +
-                    "Скриншоты, интерфейсы и мелкий текст не перерисовывай. Хотя бы одна сцена показывает исходник без генеративного изменения. " +
-                    (brief.sourceVideoFileId ? `После текста приложены ключевые кадры и расшифровка речи оставленного фрагмента исходного видео. Пиши комментарий именно к показанному и сказанному материалу, не выдумывай товар, функции и события. Расшифровка: ${videoAnalysis?.transcript ?? "речь не обнаружена"}. Если в брифе нет callToAction, верни пустую строку в callToAction и закончи основной текст естественным выводом по последнему показанному кадру. ` : "Распознай объект ролика по всем исходным изображениям. ") +
+                    "Ты сценарист коротких вертикальных видео. " +
+                    (brief.sourceVideoFileId
+                      ? `Верни только сценарий точного обзора без монтажного плана, сцен и generatedVisuals. После текста приложены ключевые кадры и расшифровка всего исходного видео. Пиши комментарий именно к показанному и сказанному материалу, не выдумывай товар, функции и события. Расшифровка: ${videoAnalysis?.transcript ?? "речь не обнаружена"}. Если в брифе нет callToAction, верни пустую строку и закончи основной текст естественным выводом по финалу видео. `
+                      : "Верни сценарий и уникальный монтажный план с 4–7 сценами по смыслу текста. Для каждой сцены выбери композицию, исходник, движение и переход. generatedVisuals добавляй только при необходимости, максимум два. Физический объект должен оставаться узнаваемым, интерфейсы и мелкий текст не перерисовывай. Хотя бы одна сцена показывает исходник без генеративного изменения. ") +
                     "Сценарий должен быть без приветствия и непроверяемых обещаний. " +
                     `Язык: ${brief.language}. Строгий объём: от ${Math.floor(brief.durationSec * 1.45)} до ${Math.ceil(brief.durationSec * 2.5)} слов, цель — ${requestedWords}. ` +
                     (attempt > 1 ? "Предыдущий ответ не прошёл проверку: исправь объём и сохрани факты брифа. " : "") +
@@ -70,7 +67,7 @@ export class GeminiScriptGenerator implements ScriptGenerator {
             }],
             generationConfig: {
               responseMimeType: "application/json",
-              responseJsonSchema: scriptJsonSchema.schema,
+              responseJsonSchema: brief.sourceVideoFileId ? sourceVideoScriptJsonSchema.schema : scriptJsonSchema.schema,
               thinkingConfig: { thinkingLevel: "minimal" },
             },
           }),

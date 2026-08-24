@@ -17,7 +17,7 @@ describe("OpenRouter script safety", () => {
       apiKey: "test", model: "test", allowFallback: false,
       videoContext: { analyze: vi.fn().mockResolvedValue({ frames: ["data:image/jpeg;base64,Zmlyc3Q=", "data:image/jpeg;base64,c2Vjb25k", "data:image/jpeg;base64,dGhpcmQ="], transcript: "В кадре показан смартфон." }) },
     });
-    await generator.generate({
+    const script = await generator.generate({
       topic: "Обзор новой модели смартфона", goal: "education", audience: "покупатели", tone: "живой", language: "ru",
       durationSec: 15, platforms: ["youtube"], sourceVideoFileId: "video", sourceVideoDurationSec: 15, avatarMode: "generated",
     });
@@ -25,6 +25,21 @@ describe("OpenRouter script safety", () => {
     const parts = request.messages[1].content as Array<{ type: string; image_url?: { url: string } }>;
     expect(parts.filter((part) => part.type === "image_url")).toHaveLength(3);
     expect(parts[0]?.type).toBe("text");
+    expect(request.response_format.json_schema.schema.properties.montagePlan).toBeUndefined();
+    expect(script.montagePlan).toBeUndefined();
+  });
+
+  it("removes legacy AI scenes from source-video scripts", () => {
+    const script = normalizeMontagePlan({
+      topic: "Обзор видео", goal: "education", audience: "зрители", tone: "живой", language: "ru",
+      durationSec: 15, platforms: ["youtube"], sourceVideoFileId: "video", sourceVideoDurationSec: 15,
+      avatarMode: "generated",
+    }, createFallbackScript({
+      topic: "Обзор видео", goal: "education", audience: "зрители", tone: "живой", language: "ru",
+      durationSec: 15, platforms: ["youtube"], sourceVideoFileId: "video", sourceVideoDurationSec: 15,
+      avatarMode: "generated",
+    }));
+    expect(script.montagePlan).toBeUndefined();
   });
 
   it("extracts schema JSON even when a free model adds a safety prefix", () => {

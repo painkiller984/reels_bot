@@ -34,7 +34,9 @@ export function formatJob(job: ContentJob): string {
 
   if (job.script) {
     lines.push("", `Хук: ${job.script.hook}`);
-    if (job.script.montagePlan) {
+    if (job.brief.sourceVideoFileId) {
+      lines.push("Формат: исходное видео + Avatar IV + центральные субтитры");
+    } else if (job.script.montagePlan) {
       lines.push(`Монтаж: AI Director · ${job.script.montagePlan.scenes.length} сцен · стиль ${job.script.montagePlan.style}`);
       lines.push(`Дополнительные AI-кадры: ${job.script.montagePlan.generatedVisuals.length}`);
     }
