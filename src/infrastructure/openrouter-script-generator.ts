@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { ScriptGenerator } from "../application/ports.js";
 import { createFallbackMontagePlan, MontagePlanSchema, productImageIds, ScriptSchema, type Brief, type Script } from "../domain/job.js";
 import { TelegramFileClient } from "./telegram-file-client.js";
+import type { VideoContextProvider } from "./telegram-video-context.js";
 
 export interface OpenRouterScriptOptions {
   apiKey: string;
@@ -11,6 +12,7 @@ export interface OpenRouterScriptOptions {
   requestTimeoutMs?: number;
   maxAttempts?: number;
   allowFallback?: boolean;
+  videoContext?: VideoContextProvider;
 }
 
 async function within<T>(task: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -208,6 +210,20 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
 
   async generate(brief: Brief): Promise<Script> {
     let productImages: string[] = [];
+    let videoFrames: string[] = [];
+    if (brief.sourceVideoFileId && this.options.videoContext) {
+      try {
+        videoFrames = await within(
+          this.options.videoContext.frames(brief.sourceVideoFileId, brief.sourceVideoDurationSec ?? brief.durationSec),
+          55_000,
+          "Video context extraction",
+        );
+      } catch (error) {
+        console.warn(JSON.stringify({ event: "script_video_context_unavailable", message: error instanceof Error ? error.message.slice(0, 300) : "unknown error" }));
+        if (this.options.allowFallback === false) throw new Error(`Не удалось проанализировать исходное видео до создания сценария: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (videoFrames.length === 0 && this.options.allowFallback === false) throw new Error("Не удалось получить кадры исходного видео; HeyGen не запускался");
+    }
     if (this.options.telegramFiles) {
       try {
         const imageLoadTimeoutMs = this.options.imageLoadTimeoutMs ?? 10_000;
@@ -259,9 +275,12 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
             },
             {
               role: "user",
-              content: productImages.length > 0
+              content: productImages.length > 0 || videoFrames.length > 0
                 ? [
-                    { type: "text", text: `Распознай объект ролика по всем исходным изображениям и создай единый сценарий и уникальную режиссуру по брифу: ${JSON.stringify(brief)}` },
+                    { type: "text", text: brief.sourceVideoFileId
+                      ? `Это последовательные ключевые кадры исходного видео. Сначала пойми, что реально показано, затем напиши точный обзор/комментарий по брифу. Не выдумывай функции, предметы или события, которых в кадрах нет. Тема задаёт угол обзора, но визуальные факты берутся только из кадров. Бриф: ${JSON.stringify(brief)}`
+                      : `Распознай объект ролика по всем исходным изображениям и создай единый сценарий и уникальную режиссуру по брифу: ${JSON.stringify(brief)}` },
+                    ...videoFrames.map((frame) => ({ type: "image_url" as const, image_url: { url: frame } })),
                     ...productImages.map((productImage) => ({ type: "image_url" as const, image_url: { url: productImage } })),
                   ]
                 : JSON.stringify(brief),

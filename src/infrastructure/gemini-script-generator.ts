@@ -2,12 +2,14 @@ import type { ScriptGenerator } from "../application/ports.js";
 import { productImageIds, ScriptSchema, type Brief, type Script } from "../domain/job.js";
 import { createFallbackScript, normalizeMontagePlan, parseScriptResponse, scriptJsonSchema } from "./openrouter-script-generator.js";
 import { TelegramFileClient } from "./telegram-file-client.js";
+import type { VideoContextProvider } from "./telegram-video-context.js";
 
 export interface GeminiScriptOptions {
   apiKey: string;
   model: string;
   telegramFiles?: TelegramFileClient;
   allowFallback?: boolean;
+  videoContext?: VideoContextProvider;
 }
 
 interface GeminiResponse {
@@ -25,6 +27,12 @@ export class GeminiScriptGenerator implements ScriptGenerator {
   constructor(private readonly options: GeminiScriptOptions) {}
 
   async generate(brief: Brief): Promise<Script> {
+    const videoFrames = brief.sourceVideoFileId && this.options.videoContext
+      ? await this.options.videoContext.frames(brief.sourceVideoFileId, brief.sourceVideoDurationSec ?? brief.durationSec)
+      : [];
+    if (brief.sourceVideoFileId && videoFrames.length === 0 && this.options.allowFallback === false) {
+      throw new Error("Не удалось получить кадры исходного видео; HeyGen не запускался");
+    }
     const productImages = this.options.telegramFiles
       ? await Promise.all(productImageIds(brief).map((fileId) => this.options.telegramFiles!.dataUrl(fileId)))
       : [];
@@ -49,12 +57,13 @@ export class GeminiScriptGenerator implements ScriptGenerator {
                     "generatedVisuals добавляй только когда сценарию нужен дополнительный кадр, максимум два. reference_scene — цельный новый кадр по выбранному исходнику; " +
                     "сам выбери уместный ракурс, окружение и действие, не своди всё к человеку с товаром. Физический объект должен оставаться узнаваемым. " +
                     "Скриншоты, интерфейсы и мелкий текст не перерисовывай. Хотя бы одна сцена показывает исходник без генеративного изменения. " +
-                    (brief.sourceVideoFileId ? "В брифе есть исходное видео: пиши комментарий именно к нему, не выдумывай товар и не добавляй AI-фоны. " : "Распознай объект ролика по всем исходным изображениям. ") +
+                    (brief.sourceVideoFileId ? "После текста приложены последовательные ключевые кадры исходного видео. Пиши комментарий именно к показанному материалу, не выдумывай товар, функции и события, которых на кадрах нет, и не добавляй AI-фоны. " : "Распознай объект ролика по всем исходным изображениям. ") +
                     "Сценарий должен быть без приветствия и непроверяемых обещаний. " +
                     `Язык: ${brief.language}. Строгий объём: от ${Math.floor(brief.durationSec * 1.45)} до ${Math.ceil(brief.durationSec * 2.5)} слов, цель — ${requestedWords}. ` +
                     (attempt > 1 ? "Предыдущий ответ не прошёл проверку: исправь объём и сохрани факты брифа. " : "") +
                     `Бриф: ${JSON.stringify(brief)}`,
                 },
+                ...videoFrames.map(inlineImage),
                 ...productImages.map(inlineImage),
               ],
             }],

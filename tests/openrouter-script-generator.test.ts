@@ -5,6 +5,28 @@ import { TelegramFileClient } from "../src/infrastructure/telegram-file-client.j
 afterEach(() => vi.restoreAllMocks());
 
 describe("OpenRouter script safety", () => {
+  it("sends extracted source-video frames to the model before writing a review", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        hook: "Новая модель сразу заметна в кадре.",
+        body: "На видео видны корпус, экран и камера устройства. Разберём, что меняется в этой модели и кому такой формат будет полезен каждый день.",
+        callToAction: "Смотрите обзор до конца.",
+      }) } }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const generator = new OpenRouterScriptGenerator({
+      apiKey: "test", model: "test", allowFallback: false,
+      videoContext: { frames: vi.fn().mockResolvedValue(["data:image/jpeg;base64,Zmlyc3Q=", "data:image/jpeg;base64,c2Vjb25k", "data:image/jpeg;base64,dGhpcmQ="]) },
+    });
+    await generator.generate({
+      topic: "Обзор новой модели смартфона", goal: "education", audience: "покупатели", tone: "живой", language: "ru",
+      durationSec: 15, platforms: ["youtube"], sourceVideoFileId: "video", sourceVideoDurationSec: 15, avatarMode: "generated",
+    });
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const parts = request.messages[1].content as Array<{ type: string; image_url?: { url: string } }>;
+    expect(parts.filter((part) => part.type === "image_url")).toHaveLength(3);
+    expect(parts[0]?.type).toBe("text");
+  });
+
   it("extracts schema JSON even when a free model adds a safety prefix", () => {
     const script = parseScriptResponse(
       'User Safety: safe\n{"hook":"Смотрите внимательно.","body":"Этот продукт помогает быстрее выполнить привычную задачу, экономит время каждый день и упрощает основные рабочие процессы.","callToAction":"Сохраните ролик и изучите детали."}',

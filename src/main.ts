@@ -30,6 +30,7 @@ import { FileYoutubeTokenStore, PrismaYoutubeTokenStore } from "./infrastructure
 import { deployPrismaMigrations } from "./infrastructure/prisma-migrator.js";
 import { LocalArtifactStore, R2ArtifactStore } from "./infrastructure/artifact-store.js";
 import { PrismaAvatarProfileStore } from "./infrastructure/prisma-avatar-profile-store.js";
+import { TelegramVideoContextProvider } from "./infrastructure/telegram-video-context.js";
 
 const config = readConfig();
 const logger = pino({ level: config.LOG_LEVEL });
@@ -61,6 +62,11 @@ if (!config.TELEGRAM_BOT_TOKEN) {
     throw new Error("HEYGEN_API_KEY is required when TTS_PROVIDER=heygen");
   }
   const telegramFiles = new TelegramFileClient(config.TELEGRAM_BOT_TOKEN);
+  const videoContext = new TelegramVideoContextProvider({
+    telegramFiles,
+    ffmpegPath,
+    scratchDir: `${config.ARTIFACTS_DIR}/video-context`,
+  });
   const musicClient = config.HEYGEN_API_KEY ? new HeyGenMusicClient(config.HEYGEN_API_KEY) : undefined;
   const speechSynthesizer = config.TTS_PROVIDER === "google"
     ? new GoogleCloudTextToSpeech({ apiKey: config.GOOGLE_TTS_API_KEY!, voiceName: config.GOOGLE_TTS_VOICE })
@@ -147,9 +153,9 @@ if (!config.TELEGRAM_BOT_TOKEN) {
     if (missing.length > 0) throw new Error(`Production configuration incomplete: ${missing.join(", ")}`);
   }
   const scripts = useGemini
-    ? new GeminiScriptGenerator({ apiKey: config.GEMINI_API_KEY!, model: config.GEMINI_MODEL, telegramFiles, allowFallback: config.APP_ENV !== "production" })
+    ? new GeminiScriptGenerator({ apiKey: config.GEMINI_API_KEY!, model: config.GEMINI_MODEL, telegramFiles, videoContext, allowFallback: config.APP_ENV !== "production" })
     : useOpenRouter
-    ? new OpenRouterScriptGenerator({ apiKey: config.OPENROUTER_API_KEY!, model: config.OPENROUTER_MODEL, telegramFiles, allowFallback: config.APP_ENV !== "production" })
+    ? new OpenRouterScriptGenerator({ apiKey: config.OPENROUTER_API_KEY!, model: config.OPENROUTER_MODEL, telegramFiles, videoContext, allowFallback: config.APP_ENV !== "production" })
     : useOpenAi
     ? new OpenAiScriptGenerator({ apiKey: config.OPENAI_API_KEY!, model: config.OPENAI_MODEL })
     : new MockScriptGenerator();
