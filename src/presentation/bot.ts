@@ -28,6 +28,7 @@ export function sourceVideoDurationError(duration: number | undefined): string |
   return undefined;
 }
 const briefKeyboard = () => new InlineKeyboard().text("Создать ролик", "brief:confirm").text("Отмена", "brief:cancel");
+const callToActionKeyboard = () => new InlineKeyboard().text("Без призыва", "brief:cta:none");
 
 function avatarKeyboard(label: string): InlineKeyboard {
   return new InlineKeyboard()
@@ -55,7 +56,8 @@ function draftSummary(draft: BriefDraft, defaultAvatarLabel: string): string {
     : draft.avatarMode === "saved" ? `сохранённый: ${draft.avatarName ?? "аватар"}` : defaultAvatarLabel;
   return [
     "Проверьте задание:", `Тема: ${draft.topic}`, `Исходный ролик: принят (${draft.sourceVideoDurationSec ?? "?"} сек)`,
-    `Аватар: ${avatar}`, "Формат: исходное видео + говорящая AI-голова + субтитры", "Платформа: YouTube",
+    `Призыв к действию: ${draft.callToAction ?? "не добавлять"}`, `Аватар: ${avatar}`,
+    "Формат: исходное видео + говорящая AI-голова + субтитры", "Платформа: YouTube",
   ].join("\n");
 }
 function completedBrief(draft: BriefDraft): unknown {
@@ -64,6 +66,7 @@ function completedBrief(draft: BriefDraft): unknown {
     topic: draft.topic, goal: "education", audience: "широкая аудитория", tone: "живой и уверенный", language: "ru",
     durationSec: duration, platforms: ["youtube"], sourceVideoFileId: draft.sourceVideoFileId, sourceVideoDurationSec: duration,
     avatarMode: draft.avatarMode ?? "generated", ...(draft.avatarId ? { avatarId: draft.avatarId } : {}),
+    ...(draft.callToAction ? { callToAction: draft.callToAction } : {}),
     ...(draft.avatarName ? { avatarName: draft.avatarName } : {}), ...(draft.avatarImageFileId ? { avatarImageFileId: draft.avatarImageFileId } : {}),
   };
 }
@@ -85,13 +88,18 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     const topic = argumentOf(ctx.message?.text);
     await drafts.start(userIdOf(ctx), topic || undefined);
     await ctx.reply(topic
-      ? "Шаг 1/3. Пришлите исходное видео, которое должен обозревать аватар."
-      : "Шаг 1/3. Пришлите исходное видео. После этого я запрошу тему ролика.");
+      ? "Шаг 1/4. Пришлите исходное видео, которое должен обозревать аватар."
+      : "Шаг 1/4. Пришлите исходное видео. После этого я запрошу тему ролика.");
   });
+
+  const showCallToActionChoice = async (ctx: Context): Promise<void> => {
+    await drafts.update(userIdOf(ctx), { stage: "call_to_action" });
+    await ctx.reply("Шаг 3/4. Напишите призыв к действию в конце ролика одним сообщением — например: «Подпишитесь, чтобы не пропустить продолжение». Если призыв не нужен, нажмите кнопку.", { reply_markup: callToActionKeyboard() });
+  };
 
   const showAvatarChoice = async (ctx: Context): Promise<void> => {
     await drafts.update(userIdOf(ctx), { stage: "avatar" });
-    await ctx.reply("Шаг 3/3. Выберите ведущего. Основной аватар уже создан в HeyGen и не тратит кредит на создание.", { reply_markup: avatarKeyboard(defaultAvatarLabel) });
+    await ctx.reply("Шаг 4/4. Выберите ведущего. Основной аватар уже создан в HeyGen и не тратит кредит на создание.", { reply_markup: avatarKeyboard(defaultAvatarLabel) });
   };
   const acceptVideo = async (ctx: Context, fileId: string, duration: number | undefined): Promise<void> => {
     const draft = await drafts.get(userIdOf(ctx));
@@ -102,16 +110,23 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     if (draft.topic) {
       await drafts.update(userIdOf(ctx), { sourceVideoFileId: fileId, sourceVideoDurationSec: safeDuration });
       await ctx.reply(`Видео принято полностью: ${safeDuration} сек.`);
-      await showAvatarChoice(ctx);
+      await showCallToActionChoice(ctx);
     } else {
       await drafts.update(userIdOf(ctx), { sourceVideoFileId: fileId, sourceVideoDurationSec: safeDuration, stage: "topic" });
-      await ctx.reply(`Видео принято полностью: ${safeDuration} сек. Шаг 2/3. Одним сообщением напишите, что именно должен объяснить или обозреть аватар в этом ролике.`);
+      await ctx.reply(`Видео принято полностью: ${safeDuration} сек. Шаг 2/4. Одним сообщением напишите, что именно должен объяснить или обозреть аватар в этом ролике.`);
     }
   };
   bot.on("message:video", (ctx) => acceptVideo(ctx, ctx.message.video.file_id, ctx.message.video.duration));
   bot.on("message:document", async (ctx) => {
     if (!ctx.message.document.mime_type?.startsWith("video/")) return void await ctx.reply("На этом шаге нужен исходный ролик MP4. Для создания аватара из фото сначала выберите эту кнопку.");
     await acceptVideo(ctx, ctx.message.document.file_id, undefined);
+  });
+
+  bot.callbackQuery("brief:cta:none", async (ctx) => {
+    const draft = await drafts.get(userIdOf(ctx));
+    await ctx.answerCallbackQuery();
+    if (!draft || draft.stage !== "call_to_action") return;
+    await showAvatarChoice(ctx);
   });
 
   bot.callbackQuery("brief:avatar:generated", async (ctx) => {
@@ -159,7 +174,12 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     const draft = await drafts.get(userIdOf(ctx)); if (!draft || ctx.message.text.startsWith("/")) return next();
     if (draft.stage === "topic") {
       const topic = ctx.message.text.trim(); if (topic.length < 3) return void await ctx.reply("Тема слишком короткая.");
-      await drafts.update(userIdOf(ctx), { topic }); await showAvatarChoice(ctx);
+      await drafts.update(userIdOf(ctx), { topic }); await showCallToActionChoice(ctx);
+    } else if (draft.stage === "call_to_action") {
+      const callToAction = ctx.message.text.trim();
+      if (callToAction.length < 3) return void await ctx.reply("Призыв слишком короткий. Напишите его подробнее или нажмите «Без призыва».");
+      if (callToAction.length > 500) return void await ctx.reply("Призыв слишком длинный. Максимум 500 символов.");
+      await drafts.update(userIdOf(ctx), { callToAction }); await showAvatarChoice(ctx);
     } else await next();
   });
 

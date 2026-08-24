@@ -10,6 +10,16 @@ describe("durable Telegram brief drafts", () => {
     expect(await store.get("user")).toMatchObject({ topic: "Обзор телефона", stage: "avatar" });
   });
 
+  it("keeps the optional call to action until the job is confirmed", async () => {
+    const store = new DraftStore();
+    await store.start("user", "Обзор часов");
+    await store.update("user", { stage: "call_to_action", callToAction: "Подпишитесь на продолжение" });
+    expect(await store.get("user")).toMatchObject({
+      stage: "call_to_action",
+      callToAction: "Подпишитесь на продолжение",
+    });
+  });
+
   it("loads a draft from PostgreSQL-compatible storage after recreating the store", async () => {
     const rows = new Map<string, unknown>();
     const prisma = {

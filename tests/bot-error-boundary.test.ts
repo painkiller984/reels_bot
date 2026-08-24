@@ -68,7 +68,7 @@ describe("Telegram webhook error boundary", () => {
 
     await expect(bot.handleUpdate(messageUpdate(2, "/create"))).resolves.toBeUndefined();
     expect(apiCalls.some(({ method, payload }) => method === "sendMessage"
-      && String((payload as { text?: string }).text).includes("Шаг 1/3"))).toBe(true);
+      && String((payload as { text?: string }).text).includes("Шаг 1/4"))).toBe(true);
     expect(consoleError).toHaveBeenCalledTimes(1);
   });
 

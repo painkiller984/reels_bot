@@ -41,6 +41,10 @@ export function formatJob(job: ContentJob): string {
       lines.push(`Дополнительные AI-кадры: ${job.script.montagePlan.generatedVisuals.length}`);
     }
   }
+  if (job.status === "avatar_generating") {
+    const elapsedMinutes = Math.max(0, Math.floor((Date.now() - job.updatedAt.getTime()) / 60_000));
+    lines.push(`HeyGen Avatar IV: обработка на стороне HeyGen${elapsedMinutes > 0 ? ` · ${elapsedMinutes} мин` : ""}. Для длинных роликов это может занять несколько минут.`);
+  }
   if (job.artifacts.some((artifact) => artifact.kind === "quality_report")) {
     lines.push("Проверка качества: пройдена");
   }

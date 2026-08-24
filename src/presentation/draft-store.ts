@@ -1,7 +1,7 @@
 import type { Platform } from "../domain/job.js";
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 
-export type DraftStage = "source_video" | "topic" | "avatar" | "avatar_image" | "confirm";
+export type DraftStage = "source_video" | "topic" | "call_to_action" | "avatar" | "avatar_image" | "confirm";
 
 export interface BriefDraft {
   stage: DraftStage;
@@ -9,6 +9,7 @@ export interface BriefDraft {
   platforms?: Platform[];
   sourceVideoFileId?: string;
   sourceVideoDurationSec?: number;
+  callToAction?: string;
   avatarMode?: "generated" | "photo" | "saved";
   avatarId?: string | undefined;
   avatarName?: string;
