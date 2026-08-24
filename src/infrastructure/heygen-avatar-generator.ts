@@ -10,6 +10,7 @@ interface HeyGenResponse<T> { data?: T; error?: { message?: string }; message?: 
 
 export interface HeyGenAvatarOptions {
   apiKey: string;
+  engine: "avatar_iv";
   resolution: "720p" | "1080p";
   aspectRatio: "9:16" | "16:9";
   defaultAvatarId?: string;
@@ -46,6 +47,7 @@ export class HeyGenAvatarGenerator implements AvatarGenerator {
         title: job.brief.topic.slice(0, 100),
         resolution: this.options.resolution,
         aspect_ratio: this.options.aspectRatio,
+        engine: { type: this.options.engine },
         fit: "cover",
         ...(usesIntegratedVoice ? { script: narration, ...(this.options.voiceId ? { voice_id: this.options.voiceId } : {}) } : { audio_asset_id: audioAssetId }),
         ...(usesIntegratedVoice ? { voice_settings: { locale: job.brief.language === "ru" ? "ru-RU" : job.brief.language } } : {}),

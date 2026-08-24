@@ -80,6 +80,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
   const avatarGenerator = config.HEYGEN_API_KEY
     ? new HeyGenAvatarGenerator({
         apiKey: config.HEYGEN_API_KEY,
+        engine: config.HEYGEN_ENGINE,
         resolution: config.HEYGEN_RESOLUTION,
         aspectRatio: config.HEYGEN_ASPECT_RATIO,
         telegramFiles,
@@ -211,7 +212,7 @@ if (!config.TELEGRAM_BOT_TOKEN) {
     media: config.MEDIA_MODE,
     tts: config.TTS_PROVIDER,
     scripts: scriptLabel,
-    avatar: avatarGenerator ? "heygen" : "placeholder",
+    avatar: avatarGenerator ? `heygen/${config.HEYGEN_ENGINE}/${config.HEYGEN_RESOLUTION}` : "placeholder",
     youtube: Boolean(youtube),
   }, webhookBaseUrl ? "Starting Telegram bot in webhook mode" : "Starting Telegram bot in long-polling mode");
   const commands = [

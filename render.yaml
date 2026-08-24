@@ -62,6 +62,8 @@ services:
         value: heygen
       - key: HEYGEN_RESOLUTION
         value: 720p
+      - key: HEYGEN_ENGINE
+        value: avatar_iv
       - key: HEYGEN_ASPECT_RATIO
         value: 9:16
       - key: YOUTUBE_PRIVACY_STATUS

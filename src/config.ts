@@ -51,6 +51,7 @@ const ConfigSchema = z.object({
   HEYGEN_DEFAULT_AVATAR_LABEL: z.string().min(2).max(80).default("Основной мужской аватар"),
   HEYGEN_VOICE_ID: optionalString,
   HEYGEN_MAX_ESTIMATED_JOB_COST_USD: z.coerce.number().positive().max(100).default(3),
+  HEYGEN_ENGINE: z.literal("avatar_iv").default("avatar_iv"),
   HEYGEN_RESOLUTION: z.enum(["720p", "1080p"]).default("720p"),
   MONTAGE_WIDTH: z.coerce.number().int().min(540).max(1080).default(720),
   MONTAGE_HEIGHT: z.coerce.number().int().min(960).max(1920).default(1280),
