@@ -333,7 +333,10 @@ export class LocalMediaPipeline implements MediaPipeline {
     const duration = Math.max(10, Math.min(input.targetDuration, sourceDuration || input.targetDuration, avatarDuration || input.targetDuration));
     const avatarSize = Math.round(Math.min(width, height) * 0.29);
     const position = this.avatarOverlayPosition(input.job, width, height, avatarSize);
-    const subtitleStyle = `FontName=Arial,FontSize=11,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment=${position.top ? 2 : 8},MarginL=76,MarginR=76,MarginV=62`;
+    // The reference format keeps captions in the visual centre. The avatar is
+    // placed in a corner, so the central text stays readable and does not sit
+    // on top of the speaker's face.
+    const subtitleStyle = "FontName=Arial,FontSize=11,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment=5,MarginL=76,MarginR=76,MarginV=0";
     const graph = [
       `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=18:4,eq=brightness=-0.18[bg]`,
       `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,setsar=1[main]`,
