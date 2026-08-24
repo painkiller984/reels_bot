@@ -35,7 +35,7 @@ export function formatJob(job: ContentJob): string {
   if (job.artifacts.some((artifact) => artifact.kind === "quality_report")) {
     lines.push("Проверка качества: пройдена");
   }
-  if (job.publications.some((item) => item.url)) {
+  if (job.publications.some((item) => item.status !== "pending")) {
     lines.push("", "Публикации:");
     for (const item of job.publications) {
       lines.push(`• ${item.platform}: ${item.url ?? item.error ?? item.status}`);

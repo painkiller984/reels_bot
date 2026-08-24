@@ -368,11 +368,12 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
     if (!id) return void await ctx.reply("Укажите ID: /publish abc123");
     const userId = userIdOf(ctx);
     const job = await jobs.get(userId, id);
-    if (job.status !== "ready_for_approval") {
+    const retryPublication = await jobs.canRetryPublication(userId, id);
+    if (job.status !== "ready_for_approval" && !retryPublication) {
       return void await ctx.reply(`Публикация недоступна. Статус: ${statusLabels[job.status]}`);
     }
     queue.enqueue("publish", userId, id);
-    await ctx.reply(`Публикация #${id} добавлена в очередь.`);
+    await ctx.reply(`${retryPublication ? "Повторная публикация" : "Публикация"} #${id} добавлена в очередь.`);
   });
 
   bot.command("retry", async (ctx) => {

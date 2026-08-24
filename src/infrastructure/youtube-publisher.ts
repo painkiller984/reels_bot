@@ -4,6 +4,29 @@ import type { ArtifactStore, SocialPublisher } from "../application/ports.js";
 import type { ContentJob, Platform } from "../domain/job.js";
 import { YoutubeAuthService } from "./youtube-auth.js";
 
+function youtubeApiError(error: unknown): Error {
+  const candidate = error as {
+    message?: string;
+    response?: {
+      data?: {
+        error?: {
+          message?: string;
+          errors?: Array<{ reason?: string; message?: string }>;
+        };
+      };
+    };
+  };
+  const apiError = candidate.response?.data?.error;
+  const reasons = apiError?.errors
+    ?.map((item) => [item.reason, item.message].filter(Boolean).join(" — "))
+    .filter(Boolean)
+    .join("; ");
+  const detail = [apiError?.message, reasons, candidate.message]
+    .filter((item, index, items): item is string => Boolean(item) && items.indexOf(item) === index)
+    .join(": ");
+  return new Error(`YouTube API: ${detail || "неизвестная ошибка"}`);
+}
+
 export class YoutubePublisher implements SocialPublisher {
   constructor(
     private readonly auth: YoutubeAuthService,
@@ -15,23 +38,27 @@ export class YoutubePublisher implements SocialPublisher {
     if (platform !== "youtube") throw new Error(`${platform}: публикация ещё не подключена`);
     const videoUri = job.artifacts.find((artifact) => artifact.kind === "render")?.uri;
     if (!videoUri) throw new Error("Не найден готовый MP4 для публикации");
-    const video = await this.artifactStore.materialize(videoUri);
-    const youtube = google.youtube({ version: "v3", auth: await this.auth.getAuthorizedClient(job.userId) });
-    const result = await youtube.videos.insert({
-      part: ["snippet", "status"],
-      requestBody: {
-        snippet: { title: job.brief.topic.slice(0, 100), description: [job.script?.hook, job.script?.body, job.script?.callToAction, "#Shorts"].filter(Boolean).join("\n\n") },
-        status: { privacyStatus: this.privacyStatus, selfDeclaredMadeForKids: false },
-      },
-      media: { body: createReadStream(video) },
-    });
-    if (!result.data.id) throw new Error("YouTube did not return a video ID");
-    const metrics = await this.getMetrics(job.userId, platform, result.data.id);
-    return {
-      url: `https://www.youtube.com/watch?v=${result.data.id}`,
-      externalId: result.data.id,
-      ...(metrics ? { metrics } : {}),
-    };
+    try {
+      const video = await this.artifactStore.materialize(videoUri);
+      const youtube = google.youtube({ version: "v3", auth: await this.auth.getAuthorizedClient(job.userId) });
+      const result = await youtube.videos.insert({
+        part: ["snippet", "status"],
+        requestBody: {
+          snippet: { title: job.brief.topic.slice(0, 100), description: [job.script?.hook, job.script?.body, job.script?.callToAction, "#Shorts"].filter(Boolean).join("\n\n") },
+          status: { privacyStatus: this.privacyStatus, selfDeclaredMadeForKids: false },
+        },
+        media: { body: createReadStream(video) },
+      });
+      if (!result.data.id) throw new Error("YouTube не вернул идентификатор загруженного видео");
+      const metrics = await this.getMetrics(job.userId, platform, result.data.id);
+      return {
+        url: `https://www.youtube.com/watch?v=${result.data.id}`,
+        externalId: result.data.id,
+        ...(metrics ? { metrics } : {}),
+      };
+    } catch (error) {
+      throw youtubeApiError(error);
+    }
   }
 
   async getMetrics(userId: string, platform: Platform, externalId: string) {

@@ -80,9 +80,11 @@ export class JobService {
   async publish(userId: string, id: string): Promise<ContentJob> {
     const job = await this.ownedJob(userId, id);
     await this.move(job, "publishing");
+    delete job.error;
 
-    let successCount = 0;
+    let successCount = job.publications.filter((publication) => publication.status === "published").length;
     for (const publication of job.publications) {
+      if (publication.status === "published") continue;
       try {
         const result = await this.publisher.publish(job, publication.platform);
         publication.url = result.url;
@@ -93,6 +95,7 @@ export class JobService {
       } catch (error) {
         publication.status = "failed";
         publication.error = error instanceof Error ? error.message : String(error);
+        console.error(JSON.stringify({ event: "publication_failed", jobId: job.id, platform: publication.platform, error: publication.error.slice(0, 1_000) }));
       }
       job.updatedAt = new Date();
       await this.jobs.save(job);
@@ -171,6 +174,14 @@ export class JobService {
     job.updatedAt = new Date();
     await this.jobs.save(job);
     return job;
+  }
+
+  async canRetryPublication(userId: string, id: string): Promise<boolean> {
+    const job = await this.ownedJob(userId, id);
+    return job.status === "failed"
+      && job.artifacts.some((artifact) => artifact.kind === "render")
+      && job.artifacts.some((artifact) => artifact.kind === "quality_report")
+      && job.publications.some((publication) => publication.status === "failed");
   }
 
   async cancel(userId: string, id: string): Promise<ContentJob> {

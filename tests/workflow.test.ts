@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createContainer } from "../src/container.js";
 import { InvalidTransitionError, assertTransition } from "../src/domain/workflow.js";
-import type { MediaPipeline } from "../src/application/ports.js";
+import type { MediaPipeline, SocialPublisher } from "../src/application/ports.js";
+import { formatJob } from "../src/presentation/formatters.js";
 
 describe("content workflow", () => {
   const productImageFileId = "telegram-product-image";
@@ -22,6 +23,35 @@ describe("content workflow", () => {
     expect(published.status).toBe("published");
     expect(published.publications.every((item) => item.status === "published")).toBe(true);
     expect(published.publications.every((item) => item.metrics?.views === 0)).toBe(true);
+  });
+
+  it("shows the platform error and retries publication without rebuilding the reel", async () => {
+    let attempts = 0;
+    const publisher: SocialPublisher = {
+      publish: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("YouTube API: invalid_grant");
+        return { url: "https://www.youtube.com/watch?v=retry-ok", externalId: "retry-ok" };
+      },
+      getMetrics: async () => undefined,
+    };
+    const { jobService } = createContainer(undefined, undefined, undefined, undefined, publisher);
+    const job = await jobService.create("publish-retry-user", {
+      topic: "Безопасный повтор публикации",
+      productImageFileId,
+      platforms: ["youtube"],
+    });
+    await jobService.produce("publish-retry-user", job.id);
+
+    const failed = await jobService.publish("publish-retry-user", job.id);
+    expect(failed.status).toBe("failed");
+    expect(await jobService.canRetryPublication("publish-retry-user", job.id)).toBe(true);
+    expect(formatJob(failed)).toContain("youtube: YouTube API: invalid_grant");
+
+    const published = await jobService.publish("publish-retry-user", job.id);
+    expect(published.status).toBe("published");
+    expect(published.publications[0]?.url).toBe("https://www.youtube.com/watch?v=retry-ok");
+    expect(attempts).toBe(2);
   });
 
   it("does not persist HeyGen integrated TTS control URIs as files", async () => {
