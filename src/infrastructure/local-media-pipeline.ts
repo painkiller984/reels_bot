@@ -44,8 +44,14 @@ export function sourceVideoTimeline(sourceDuration: number, avatarDuration: numb
 } {
   const safeSourceDuration = sourceDuration || targetDuration;
   const safeAvatarDuration = avatarDuration || targetDuration;
-  const duration = Math.max(10, safeSourceDuration, safeAvatarDuration + SOURCE_VIDEO_NARRATION_TAIL_SEC);
+  const duration = Math.max(10, targetDuration, safeSourceDuration, safeAvatarDuration + SOURCE_VIDEO_NARRATION_TAIL_SEC);
   return { duration, sourceExtension: Math.max(0, duration - safeSourceDuration) };
+}
+
+export function trailingSilenceLimit(hasSourceVideo: boolean): number {
+  // A source Reel may naturally continue after the presenter finishes. A
+  // short visual outro is preferable to cutting the last word.
+  return hasSourceVideo ? 2.5 : 1.2;
 }
 
 export interface LocalMediaOptions {
@@ -265,7 +271,7 @@ export class LocalMediaPipeline implements MediaPipeline {
         && cues.every((cue) => cue.text.split("\n").length <= 2),
       subtitleTimingValid: cues.every((cue) => cue.start >= 0 && cue.end > cue.start && cue.end <= duration + 1),
       audioLevelReasonable: Number.isFinite(meanVolume) && meanVolume >= -30 && meanVolume <= -8,
-      trailingSilenceReasonable: trailingSilence <= 1.2,
+      trailingSilenceReasonable: trailingSilence <= trailingSilenceLimit(Boolean(job.brief.sourceVideoFileId)),
       blackFramesReasonable: blackDuration <= Math.max(1, duration * 0.1),
       montageLayoutsVaried: job.brief.sourceVideoFileId ? true : new Set(montagePlan.scenes.map((scene) => scene.kind)).size >= 2,
       montageMotionsVaried: job.brief.sourceVideoFileId ? true : new Set(montagePlan.scenes.map((scene) => scene.motion)).size >= 2,
@@ -357,7 +363,8 @@ export class LocalMediaPipeline implements MediaPipeline {
     // Never cut the final word. Keep the complete source clip and, when the
     // avatar voice runs longer, freeze the final source frame until narration
     // plus a short natural tail has finished.
-    const { duration, sourceExtension } = sourceVideoTimeline(sourceDuration, avatarDuration, input.targetDuration);
+    const expectedDuration = Math.max(input.targetDuration, input.job.brief.durationSec);
+    const { duration, sourceExtension } = sourceVideoTimeline(sourceDuration, avatarDuration, expectedDuration);
     // The reference layout uses the same circular talking-head treatment for
     // both the built-in desk presenter and user-provided avatars.
     const avatarSize = Math.round(Math.min(width, height) * SOURCE_VIDEO_AVATAR_SCALE / 2) * 2;

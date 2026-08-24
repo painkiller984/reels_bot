@@ -186,6 +186,38 @@ describe("content workflow", () => {
     expect(completed.error).toBeUndefined();
   });
 
+  it("retries montage quality failures without paying for HeyGen again", async () => {
+    const calls = { avatar: 0, render: 0 };
+    const media: MediaPipeline = {
+      synthesizeSpeech: async () => "heygen://tts/reused",
+      createAvatar: async () => { calls.avatar += 1; return "new-avatar.mp4"; },
+      render: async () => { calls.render += 1; return "fixed-final.mp4"; },
+      validate: async () => "fixed-quality.json",
+    };
+    const { repository, jobService } = createContainer(undefined, undefined, media, undefined, undefined, {
+      name: "retry-artifacts",
+      persist: async (jobId, artifact) => `r2://bucket/${jobId}/${artifact.kind}`,
+      materialize: async (uri) => `materialized-${uri.split("/").at(-1)}`,
+      createDownloadUrl: async () => undefined,
+    });
+    const job = await jobService.create("qc-retry-user", { topic: "Исправление финального монтажа", productImageFileId });
+    job.status = "failed";
+    job.error = "Media quality gate failed: trailingSilenceReasonable";
+    job.script = { title: "Готовое название", hook: "Готовый хук.", body: "Готовый сценарий уже озвучен.", callToAction: "" };
+    job.artifacts = [
+      { kind: "avatar_video", uri: "r2://bucket/job/avatar_video", createdAt: new Date() },
+      { kind: "render", uri: "r2://bucket/job/render", createdAt: new Date() },
+    ];
+    await repository.save(job);
+
+    const reset = await jobService.retryFailedProduction("qc-retry-user", job.id);
+    expect(reset.artifacts.map((artifact) => artifact.kind)).toEqual(["avatar_video"]);
+    expect(reset.script?.title).toBe("Готовое название");
+    const ready = await jobService.produce("qc-retry-user", job.id);
+    expect(ready.status).toBe("ready_for_approval");
+    expect(calls).toEqual({ avatar: 0, render: 1 });
+  });
+
   it("cancels a task before expensive production starts", async () => {
     const { jobService } = createContainer();
     const job = await jobService.create("user-5", { topic: "Отмена задачи", productImageFileId });

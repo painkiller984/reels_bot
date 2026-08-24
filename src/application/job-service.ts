@@ -172,8 +172,16 @@ export class JobService {
     }
     await this.move(job, "brief_ready");
     delete job.error;
-    delete job.script;
-    job.artifacts = [];
+    const hasReusableAvatar = Boolean(job.script && this.artifact(job, "avatar_video"));
+    if (hasReusableAvatar) {
+      // A montage/QC failure must not trigger another paid HeyGen render.
+      // Keep the approved script and expensive avatar, rebuild only the final
+      // MP4 and its quality report with the corrected FFmpeg pipeline.
+      job.artifacts = job.artifacts.filter((artifact) => ["audio", "avatar_video"].includes(artifact.kind));
+    } else {
+      delete job.script;
+      job.artifacts = [];
+    }
     job.publications = job.brief.platforms.map((platform) => ({ platform, status: "pending" }));
     job.updatedAt = new Date();
     await this.jobs.save(job);
