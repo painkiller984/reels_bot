@@ -124,7 +124,10 @@ export class LocalMediaPipeline implements MediaPipeline {
     const captionsSource = await this.fileExists(heygenCaptions)
       ? await readFile(heygenCaptions, "utf8")
       : this.createSrt(job);
-    await writeFile(captions, this.normalizeSrt(captionsSource), "utf8");
+    // HeyGen sidecar captions can be a little longer than the encoded avatar
+    // video. Clamp them before burning and before the quality gate validates
+    // the final media timeline.
+    await writeFile(captions, this.normalizeSrt(captionsSource, targetDuration), "utf8");
     const subtitlePath = captions.replace(/\\/g, "/").replace(":", "\\:").replace(/'/g, "\\'");
     if (job.brief.sourceVideoFileId && this.options.downloadTelegramVideo) {
       const source = resolve(directory, "source.mp4");
@@ -288,7 +291,10 @@ export class LocalMediaPipeline implements MediaPipeline {
     };
     const output = resolve(await this.jobDirectory(job.id), "quality.json");
     await writeFile(output, JSON.stringify(report, null, 2), "utf8");
-    if (!passed) throw new Error(`Media quality gate failed: duration=${duration.toFixed(2)}s expected=${job.brief.durationSec}s checks=${JSON.stringify(checks)}`);
+    if (!passed) {
+      const failedChecks = Object.entries(checks).filter(([, value]) => !value).map(([name]) => name);
+      throw new Error(`Media quality gate failed: ${failedChecks.join(", ")} (duration=${duration.toFixed(2)}s, expected=${job.brief.durationSec}s)`);
+    }
     return output;
   }
 
@@ -657,8 +663,13 @@ export class LocalMediaPipeline implements MediaPipeline {
     return `${common},FontSize=11,Outline=2,Shadow=1,Bold=1`;
   }
 
-  private normalizeSrt(source: string): string {
-    const cues = this.parseSrt(source);
+  private normalizeSrt(source: string, maxDuration?: number): string {
+    const cues = this.parseSrt(source).flatMap((cue) => {
+      if (maxDuration === undefined) return [cue];
+      const start = Math.max(0, cue.start);
+      const end = Math.min(cue.end, maxDuration);
+      return end - start >= 0.05 ? [{ ...cue, start, end }] : [];
+    });
     const normalized: SubtitleCue[] = [];
     for (const cue of cues) {
       const pages = this.subtitlePages(cue.text, 22, 2);
