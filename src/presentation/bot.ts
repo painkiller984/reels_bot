@@ -21,7 +21,12 @@ type JobAction = "status" | "preview" | "publish" | "retry" | "cancel";
 
 const argumentOf = (text: string | undefined): string => text?.replace(/^\/\w+(?:@\w+)?\s*/, "").trim() ?? "";
 const userIdOf = (ctx: Context): string => String(ctx.from?.id ?? ctx.chat?.id ?? (() => { throw new Error("Не удалось определить пользователя Telegram"); })());
-const outputDurationFor = (sourceDuration: number): number => Math.min(180, Math.floor(sourceDuration / 5) * 5);
+export function sourceVideoDurationError(duration: number | undefined): string | undefined {
+  if (duration === undefined) return "Отправьте ролик как видео, чтобы Telegram передал его длительность.";
+  if (duration < 10) return "Исходное видео должно быть длительностью от 10 до 60 секунд. Это видео слишком короткое.";
+  if (duration > 60) return "Исходное видео должно быть длительностью от 10 до 60 секунд. Это видео слишком длинное.";
+  return undefined;
+}
 const briefKeyboard = () => new InlineKeyboard().text("Создать ролик", "brief:confirm").text("Отмена", "brief:cancel");
 
 function avatarKeyboard(label: string): InlineKeyboard {
@@ -54,7 +59,7 @@ function draftSummary(draft: BriefDraft, defaultAvatarLabel: string): string {
   ].join("\n");
 }
 function completedBrief(draft: BriefDraft): unknown {
-  const duration = Math.max(10, Math.min(180, draft.sourceVideoDurationSec ?? 30));
+  const duration = Math.max(10, Math.min(60, draft.sourceVideoDurationSec ?? 30));
   return {
     topic: draft.topic, goal: "education", audience: "широкая аудитория", tone: "живой и уверенный", language: "ru",
     durationSec: duration, platforms: ["youtube"], sourceVideoFileId: draft.sourceVideoFileId, sourceVideoDurationSec: duration,
@@ -91,15 +96,16 @@ export function createBot(token: string, jobs: JobService, queue: JobQueue, capa
   const acceptVideo = async (ctx: Context, fileId: string, duration: number | undefined): Promise<void> => {
     const draft = await drafts.get(userIdOf(ctx));
     if (!draft || draft.stage !== "source_video") return void await ctx.reply("Сначала запустите /create.");
-    if ((duration ?? 0) < 10) return void await ctx.reply("Исходное видео должно быть не короче 10 секунд.");
-    const safeDuration = outputDurationFor(duration!);
+    const durationError = sourceVideoDurationError(duration);
+    if (durationError) return void await ctx.reply(durationError);
+    const safeDuration = duration!;
     if (draft.topic) {
       await drafts.update(userIdOf(ctx), { sourceVideoFileId: fileId, sourceVideoDurationSec: safeDuration });
-      await ctx.reply(`Принят фрагмент первых ${safeDuration} сек исходного видео.`);
+      await ctx.reply(`Видео принято полностью: ${safeDuration} сек.`);
       await showAvatarChoice(ctx);
     } else {
       await drafts.update(userIdOf(ctx), { sourceVideoFileId: fileId, sourceVideoDurationSec: safeDuration, stage: "topic" });
-      await ctx.reply(`Принят фрагмент первых ${safeDuration} сек. Шаг 2/3. Одним сообщением напишите, что именно должен объяснить или обозреть аватар в этом ролике.`);
+      await ctx.reply(`Видео принято полностью: ${safeDuration} сек. Шаг 2/3. Одним сообщением напишите, что именно должен объяснить или обозреть аватар в этом ролике.`);
     }
   };
   bot.on("message:video", (ctx) => acceptVideo(ctx, ctx.message.video.file_id, ctx.message.video.duration));

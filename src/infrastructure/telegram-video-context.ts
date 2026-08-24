@@ -26,8 +26,8 @@ export class TelegramVideoContextProvider implements VideoContextProvider {
   async analyze(fileId: string, durationSec: number): Promise<VideoAnalysis> {
     const directory = resolve(this.options.scratchDir, `context-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
     const source = resolve(directory, "source.mp4");
-    // About one frame per 2.5 seconds: 10 sec -> 4 frames, 15 -> 6,
-    // 20 -> 8. The duration is the output duration, never the discarded tail.
+    // About one frame per 2.5 seconds for short clips, capped at 12 frames for
+    // a 60-second Reel. The complete accepted video is analyzed; no tail is cut.
     const frameCount = Math.max(4, Math.min(12, this.options.frameCount ?? Math.ceil(durationSec / 2.5)));
     try {
       await mkdir(directory, { recursive: true });

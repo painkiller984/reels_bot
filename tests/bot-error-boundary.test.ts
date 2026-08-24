@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { createContainer } from "../src/container.js";
 import { LocalArtifactStore } from "../src/infrastructure/artifact-store.js";
-import { createBot } from "../src/presentation/bot.js";
+import { createBot, sourceVideoDurationError } from "../src/presentation/bot.js";
 
 const botInfo: UserFromGetMe = {
   id: 1,
@@ -36,6 +36,15 @@ function messageUpdate(updateId: number, text: string): Update {
 }
 
 describe("Telegram webhook error boundary", () => {
+  it("accepts exact source duration from 10 through 60 seconds without rounding", () => {
+    expect(sourceVideoDurationError(9)).toMatch(/короткое/u);
+    expect(sourceVideoDurationError(10)).toBeUndefined();
+    expect(sourceVideoDurationError(12)).toBeUndefined();
+    expect(sourceVideoDurationError(59)).toBeUndefined();
+    expect(sourceVideoDurationError(60)).toBeUndefined();
+    expect(sourceVideoDurationError(61)).toMatch(/длинное/u);
+  });
+
   it("keeps processing commands after an invalid task ID", async () => {
     const { jobService, queue } = createContainer();
     const bot = createBot("123456789:test-token", jobService, queue, {
