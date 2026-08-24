@@ -200,6 +200,18 @@ describe("content workflow", () => {
     expect(completed.error).toBeUndefined();
   });
 
+  it("does not expose script validation JSON in the Telegram status", async () => {
+    const { repository, jobService } = createContainer();
+    const job = await jobService.create("user-safe-error", { topic: "Обзор часов", productImageFileId });
+    job.status = "failed";
+    job.error = 'Не удалось создать корректный сценарий после 3 попыток: [{"expected":"string","path":["hook"]}]';
+    await repository.save(job);
+
+    const message = formatJob(await jobService.get("user-safe-error", job.id));
+    expect(message).toContain("Исходное видео сохранено — нажмите «Повторить»");
+    expect(message).not.toContain("expected");
+  });
+
   it("retries montage quality failures without paying for HeyGen again", async () => {
     const calls = { avatar: 0, render: 0 };
     const media: MediaPipeline = {

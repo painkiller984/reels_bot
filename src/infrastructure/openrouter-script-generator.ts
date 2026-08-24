@@ -118,7 +118,8 @@ export function parseScriptResponse(text: string, durationSec: number, sourceVid
   const objectStart = withoutFence.indexOf("{");
   const objectEnd = withoutFence.lastIndexOf("}");
   if (objectStart < 0 || objectEnd <= objectStart) throw new Error("OpenRouter response does not contain JSON");
-  const script = ScriptSchema.parse(JSON.parse(withoutFence.slice(objectStart, objectEnd + 1)));
+  const parsed = JSON.parse(withoutFence.slice(objectStart, objectEnd + 1)) as unknown;
+  const script = ScriptSchema.parse(repairMissingHook(parsed));
   const words = spokenWordCount(script);
   // HeyGen speaks roughly two Russian words per second. A much shorter script
   // produces a technically valid avatar video that fails the duration gate.
@@ -131,6 +132,28 @@ export function parseScriptResponse(text: string, durationSec: number, sourceVid
     throw new Error(`OpenRouter script length is unsuitable: ${words} words for ${durationSec} seconds`);
   }
   return script;
+}
+
+function repairMissingHook(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const candidate = { ...(value as Record<string, unknown>) };
+  if (typeof candidate.hook === "string" && candidate.hook.trim()) return candidate;
+  if (typeof candidate.body !== "string") return candidate;
+
+  const words = candidate.body.trim().split(/\s+/u).filter(Boolean);
+  if (words.length < 8) return candidate;
+  // Some OpenRouter routes occasionally omit the hook even with a strict
+  // schema. Split it out of the already video-grounded narration instead of
+  // inventing a generic fallback or reusing the title as spoken text.
+  const hookWordCount = Math.min(10, Math.max(4, Math.round(words.length * 0.25)));
+  candidate.hook = `${words.slice(0, hookWordCount).join(" ").replace(/[,:;]+$/u, "")}.`;
+  candidate.body = words.slice(hookWordCount).join(" ");
+  return candidate;
+}
+
+function compactValidationError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\s+/gu, " ").slice(0, 500);
 }
 
 export function createFallbackScript(brief: Brief): Script {
@@ -273,6 +296,7 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
     const requestedWords = Math.max(15, Math.round(brief.durationSec * (brief.sourceVideoFileId ? 1.65 : 2.05)));
     const maxAttempts = this.options.maxAttempts ?? 3;
     const requestTimeoutMs = this.options.requestTimeoutMs ?? 12_000;
+    let previousValidationError = "";
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         const strictStructuredOutput = attempt === 1;
@@ -291,7 +315,7 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
                 "Поле title — короткое естественное название из 4–8 слов по фактическому содержанию ролика. Оно используется только как метаданные, не входит в озвучку. Пользовательский topic — инструкция и угол для сценария, не готовое название. " +
                 "Текст должен естественно звучать вслух, начинаться без приветствия, не содержать непроверяемых обещаний, " +
                 `содержать от ${Math.floor(brief.durationSec * (brief.sourceVideoFileId ? 1.25 : 1.45))} до ${Math.ceil(brief.durationSec * (brief.sourceVideoFileId ? 1.9 : 2.5))} слов (цель — ${requestedWords}) и быть написан на языке ${brief.language}. ` +
-                (attempt > 1 ? "Предыдущий вариант не прошёл проверку; точно соблюди объём и JSON-схему. " : "") +
+                (attempt > 1 ? `Предыдущий вариант не прошёл проверку: ${previousValidationError}. Исправь именно эту ошибку и точно соблюди объём и JSON-схему. ` : "") +
                 (brief.sourceVideoFileId
                   ? "Визуальная основа — всё присланное пользователем видео. Сценарий должен быть комментарием/обзором именно показанного и сказанного; не выдумывай продукт, не создавай монтажный план, сцены или AI-фоны. Если в брифе есть callToAction, сохрани его смысл и поставь в конце; если его нет, верни пустую строку и закончи body естественным выводом по финалу видео. "
                   : "Создай 4–7 быстрых сцен как уникальный режиссёрский план именно для смысла сценария. Для каждой сцены заполни beat, композицию, исходник, движение, переход и длительность. generatedVisuals добавляй только при необходимости, максимум два. Для generated_scene укажи generated_N в background. Хотя бы одна сцена обязана показывать исходник без генеративного изменения. Сохраняй физический товар узнаваемым, а интерфейсы и мелкий текст не перерисовывай. ") +
@@ -315,9 +339,16 @@ export class OpenRouterScriptGenerator implements ScriptGenerator {
         if (!text) throw new Error("OpenRouter did not return a script");
         return normalizeMontagePlan(brief, parseScriptResponse(text, brief.durationSec, Boolean(brief.sourceVideoFileId)));
       } catch (error) {
+        previousValidationError = compactValidationError(error);
+        console.warn(JSON.stringify({
+          event: "script_generation_attempt_failed",
+          attempt,
+          maxAttempts,
+          message: previousValidationError,
+        }));
         if (attempt === maxAttempts) {
           if (this.options.allowFallback !== false) return createFallbackScript(brief);
-          throw new Error(`Не удалось создать корректный сценарий после ${maxAttempts} попыток: ${error instanceof Error ? error.message : String(error)}`);
+          throw new Error(`Не удалось создать корректный сценарий после ${maxAttempts} попыток: ${previousValidationError}`);
         }
         await new Promise((resolveDelay) => setTimeout(resolveDelay, attempt * 500));
       }

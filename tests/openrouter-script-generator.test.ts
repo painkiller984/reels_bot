@@ -64,6 +64,40 @@ describe("OpenRouter script safety", () => {
     expect([script.hook, script.body, script.callToAction].join(" ")).not.toContain(script.title!);
   });
 
+  it("recovers a missing hook from the video-grounded narration", () => {
+    const script = parseScriptResponse(JSON.stringify({
+      title: "Apple Watch в повседневной жизни",
+      body: "На экране часов видны уведомления и показатели активности. Затем пользователь открывает функции помощника и проверяет ежедневные данные прямо на запястье.",
+      callToAction: "",
+    }), 15, true);
+
+    expect(script.hook).toContain("На экране часов");
+    expect(script.body).toContain("Затем пользователь");
+    expect(`${script.hook} ${script.body}`).not.toContain("Apple Watch в повседневной жизни");
+  });
+
+  it("tells the model why a previous script failed validation", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        title: "Короткий ответ", hook: "Хук.", body: "Слишком коротко.", callToAction: "",
+      }) } }] }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        title: "Apple Watch в повседневной жизни",
+        hook: "Часы показывают главное прямо на запястье.",
+        body: "На экране видны уведомления, показатели активности и команды помощника, которые пользователь проверяет в течение обычного дня.",
+        callToAction: "",
+      }) } }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    const generator = new OpenRouterScriptGenerator({ apiKey: "test", model: "test", allowFallback: false, maxAttempts: 2 });
+
+    await generator.generate({
+      topic: "Обзор Apple Watch", goal: "education", audience: "покупатели", tone: "живой", language: "ru",
+      durationSec: 15, platforms: ["youtube"], productImageFileId: "image", avatarMode: "generated",
+    });
+
+    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(secondRequest.messages[0].content).toContain("script length is unsuitable");
+  });
+
   it("rejects a script that cannot fit the requested duration", () => {
     const body = Array.from({ length: 100 }, () => "слово").join(" ");
     expect(() => parseScriptResponse(

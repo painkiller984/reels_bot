@@ -57,8 +57,15 @@ export function formatJob(job: ContentJob): string {
       if (item.metrics) lines.push(`  Просмотры: ${item.metrics.views} · лайки: ${item.metrics.likes} · комментарии: ${item.metrics.comments}`);
     }
   }
-  if (job.error) lines.push("", `Ошибка: ${job.error}`);
+  if (job.error) lines.push("", `Ошибка: ${userFacingError(job.error)}`);
   return lines.join("\n");
+}
+
+function userFacingError(error: string): string {
+  if (/не удалось создать корректный сценарий|invalid_type|expected string/iu.test(error)) {
+    return "Не удалось подготовить сценарий. Исходное видео сохранено — нажмите «Повторить».";
+  }
+  return error;
 }
 
 export function formatQueue(jobs: ContentJob[]): string {
