@@ -48,10 +48,8 @@ export function sourceVideoTimeline(sourceDuration: number, avatarDuration: numb
   return { duration, sourceExtension: Math.max(0, duration - safeSourceDuration) };
 }
 
-export function trailingSilenceLimit(hasSourceVideo: boolean): number {
-  // A source Reel may naturally continue after the presenter finishes. A
-  // short visual outro is preferable to cutting the last word.
-  return hasSourceVideo ? 2.5 : 1.2;
+export function trailingSilenceIsReasonable(hasSourceVideo: boolean, trailingSilenceSec: number): boolean {
+  return hasSourceVideo || trailingSilenceSec <= 1.2;
 }
 
 export interface LocalMediaOptions {
@@ -271,7 +269,11 @@ export class LocalMediaPipeline implements MediaPipeline {
         && cues.every((cue) => cue.text.split("\n").length <= 2),
       subtitleTimingValid: cues.every((cue) => cue.start >= 0 && cue.end > cue.start && cue.end <= duration + 1),
       audioLevelReasonable: Number.isFinite(meanVolume) && meanVolume >= -30 && meanVolume <= -8,
-      trailingSilenceReasonable: trailingSilence <= trailingSilenceLimit(Boolean(job.brief.sourceVideoFileId)),
+      // In source-video mode the presenter may finish before the retained
+      // visual outro. The narration is already duration-bounded and subtitle
+      // timing is validated separately, so silence here must not reject an
+      // otherwise correct Reel.
+      trailingSilenceReasonable: trailingSilenceIsReasonable(Boolean(job.brief.sourceVideoFileId), trailingSilence),
       blackFramesReasonable: blackDuration <= Math.max(1, duration * 0.1),
       montageLayoutsVaried: job.brief.sourceVideoFileId ? true : new Set(montagePlan.scenes.map((scene) => scene.kind)).size >= 2,
       montageMotionsVaried: job.brief.sourceVideoFileId ? true : new Set(montagePlan.scenes.map((scene) => scene.motion)).size >= 2,

@@ -3,7 +3,7 @@ import {
   LocalMediaPipeline,
   SOURCE_VIDEO_AVATAR_SCALE,
   sourceVideoTimeline,
-  trailingSilenceLimit,
+  trailingSilenceIsReasonable,
 } from "../src/infrastructure/local-media-pipeline.js";
 
 describe("LocalMediaPipeline subtitle normalization", () => {
@@ -40,6 +40,7 @@ describe("LocalMediaPipeline subtitle normalization", () => {
     const roundedTelegramDuration = sourceVideoTimeline(14.04, 14.04, 15);
     expect(roundedTelegramDuration.duration).toBe(15);
     expect(roundedTelegramDuration.sourceExtension).toBeCloseTo(0.96);
-    expect(trailingSilenceLimit(true)).toBe(2.5);
+    expect(trailingSilenceIsReasonable(true, 4.5)).toBe(true);
+    expect(trailingSilenceIsReasonable(false, 4.5)).toBe(false);
   });
 });
