@@ -344,14 +344,13 @@ export class LocalMediaPipeline implements MediaPipeline {
     // placed in a corner, so the central text stays readable and does not sit
     // on top of the speaker's face.
     const subtitleStyle = "FontName=Arial,FontSize=11,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment=5,MarginL=76,MarginR=76,MarginV=0";
-    // Keep only one decoded copy of the source in memory. The previous blurred
-    // background duplicated every source frame and exhausted Render Free's
-    // 512 MB limit during 720p composition.
-    const avatarFilter = `[1:v]crop='min(iw,ih)':'min(iw,ih)':'(iw-min(iw,ih))/2':'(ih-min(iw,ih))/2',scale=${avatarSize}:${avatarSize}:flags=fast_bilinear,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte((X-W/2)^2+(Y-H/2)^2,(W/2-5)^2),255,0)'[avatar]`;
+    // Keep only one decoded copy of the source in memory. Cover-crop fills the
+    // complete 9:16 canvas instead of leaving letterbox bars around 16:9 input.
+    // Portrait avatar footage is cropped from the upper part of the frame so
+    // the circle emphasises the face instead of the torso.
+    const avatarFilter = `[1:v]crop='min(iw,ih)':'min(iw,ih)':'(iw-min(iw,ih))/2':'max(0,(ih-min(iw,ih))*0.12)',scale=${avatarSize}:${avatarSize}:flags=fast_bilinear,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte((X-W/2)^2+(Y-H/2)^2,(W/2-5)^2),255,0)'[avatar]`;
     const graph = [
-      `color=c=0x101010:s=${width}x${height}:r=30[bg]`,
-      `[0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,setsar=1[main]`,
-      `[bg][main]overlay=(W-w)/2:(H-h)/2:shortest=1[base]`,
+      `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=${width}:${height},setsar=1[base]`,
       avatarFilter,
       `[base][avatar]overlay=${position.x}:${position.y}:shortest=1,subtitles='${input.captions}':force_style='${subtitleStyle}'[outv]`,
       `[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,atrim=duration=${duration},apad=whole_dur=${duration}[outa]`,
